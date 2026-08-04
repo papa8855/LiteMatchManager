@@ -19,7 +19,7 @@ public partial class LiteMatchManager
         
         _bShowingRoundStartHud = true;
         
-        // 堅持 2 秒硬需求
+        // 2 秒
         AddTimer(2.0f, () =>
         {
             HUD_Clear(); 
