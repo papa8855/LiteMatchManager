@@ -6,21 +6,16 @@ namespace LiteMatchManager;
 
 public partial class LiteMatchManager
 {
-    private CCSGameRulesProxy? _hudGameRulesProxy = null;
     private bool _bShowingRoundStartHud = false;
-    private bool _runThisTick = false;
 
+    // 給檔案一換地圖時呼叫的重置
     private void HUD_OnMapStart()
     {
-        _hudGameRulesProxy = null;
+        // 【優化】因為移除了黑魔法，這裡不再需要重置 _hudGameRulesProxy
         _bShowingRoundStartHud = false;
     }
 
-    private void HUD_Clear()
-    {
-        _bShowingRoundStartHud = false;
-    }
-
+    // 給檔案一回合開始時呼叫的計時器
     private HookResult HUD_OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
@@ -29,80 +24,74 @@ public partial class LiteMatchManager
         
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            _bShowingRoundStartHud = false;
+            HUD_Clear(); 
         });
 
         return HookResult.Continue;
     }
 
+    // 時間到，暴力清除畫面
+    private void HUD_Clear()
+    {
+        _bShowingRoundStartHud = false;
+
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (IsPlayerValidHUD(p))
+            {
+                // 【關鍵修復】直接傳送絕對空字串 ""，不要放 <font></font> 或空白鍵
+                p.PrintToCenterHtml("");
+            }
+        }
+
+        // 【關鍵修復】徹底刪除原本的 GameRestart 與 SetStateChanged 黑魔法！
+        // CS2 原生收到 "" 就會收起 UI，強制刷新反而會觸發 Panorama UI 的空黑框 Bug。
+    }
+
+    // 每一 Tick 渲染計分板
     private void HUD_OnTick()
     {
-        if (_bShowingRoundStartHud)
+        // 【優化】原本這裡有尋找 _hudGameRulesProxy 的迴圈，現在直接拔除，實現 0 負擔 Tick！
+
+        if (!_bShowingRoundStartHud) return;
+
+        if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
         {
-            if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
+            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
             {
-                foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-                {
-                    if (team.TeamNum == 2) _cachedTeamT = team;
-                    if (team.TeamNum == 3) _cachedTeamCT = team;
-                }
-            }
-
-            int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
-            int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
-            string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
-
-            string line1 = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
-            string line2 = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
-            string line3 = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
-            string fullHudHtml = line1 + line2 + line3;
-
-            foreach (var player in Utilities.GetPlayers())
-            {
-                if (IsPlayerValidHUD(player))
-                {
-                    player.PrintToCenterHtml(fullHudHtml);
-                }
+                if (team.TeamNum == 2) _cachedTeamT = team;
+                if (team.TeamNum == 3) _cachedTeamCT = team;
             }
         }
 
-        _runThisTick = !_runThisTick;
-        if (!_runThisTick) return;
+        int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
+        int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
+        string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
 
-        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
+        // 【優化】使用 .NET 的字串串接，減少多次 string.Format 產生的變數
+        string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr) + 
+                             string.Format(Config.HudHtml_RoundStart_TScore, scoreT) + 
+                             string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
+
+        foreach (var player in Utilities.GetPlayers())
         {
-            foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+            if (IsPlayerValidHUD(player))
             {
-                _hudGameRulesProxy = proxy;
-                break;
+                player.PrintToCenterHtml(fullHudHtml);
             }
-        }
-
-        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid) return;
-
-        var gameRules = _hudGameRulesProxy.GameRules;
-        if (gameRules == null || gameRules.WarmupPeriod) return;
-
-        float currentTime = Server.CurrentTime;
-        float restartTime = gameRules.RestartRoundTime;
-
-        bool expectedState = restartTime < currentTime;
-
-        if (gameRules.GameRestart != expectedState)
-        {
-            gameRules.GameRestart = expectedState;
-            Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
         }
     }
 
+    // 專屬於 HUD 的防呆判斷
     private static bool IsPlayerValidHUD(CCSPlayerController? player)
     {
-        return player != null
-            && player.IsValid
-            && !player.IsBot
-            && player.Pawn != null
-            && player.Pawn.IsValid
-            && player.Connected == PlayerConnectedState.Connected
-            && !player.IsHLTV;
+        // 【優化】.NET 10 屬性模式匹配 (Pattern Matching)，取代落落長的 && 判斷，底層跳轉效能更佳
+        return player is { 
+            IsValid: true, 
+            IsBot: false, 
+            IsHLTV: false, 
+            Connected: PlayerConnectedState.Connected, 
+            Pawn.IsValid: true 
+        };
     }
 }
