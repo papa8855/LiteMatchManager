@@ -69,21 +69,21 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line2")] 
     public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'>率 先 取 得 </font><font class='fontSize-xxl' color='lime'><b>２０</b></font><font class='fontSize-xxl' color='white'> 勝 者 為 贏 家</font>";
 
-    // === 【新增】第二種 HUD 的設定 ===
+    // === 【新增】第二種 HUD 的設定檔 ===
     [JsonPropertyName("RoundStartHudDuration")] 
     public float RoundStartHudDuration { get; set; } = 2.0f;
 
     [JsonPropertyName("HudHtml_RoundStart_Title")]
-    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}:</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
+    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}:</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>２０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_TScore")]
     public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_CTScore")]
-    public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
+    public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>２０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
-// 加上 partial 讓它可以和 HUD 檔案相通
+// 加上 partial 關鍵字，讓它可以跟檔案二溝通
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
@@ -118,26 +118,20 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    // === 【新增】跨檔案共用的狀態變數 ===
-    private CCSGameRulesProxy? _gameRulesProxy = null;
-    private bool _bShowingRoundStartHud = false;
-    private bool _runThisTick = false;
-
     private void InitializeGameRules()
     {
         if (_gameRulesInitialized) return;
         
+        // 【完全保留】您原本的寫法
         foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
-            _gameRulesProxy = proxy; // 【新增】抓取黑魔法需要的 Proxy
             _gameRules = proxy.GameRules;
             break;
         }
         
-        _gameRulesInitialized = _gameRules != null && _gameRulesProxy != null;
+        _gameRulesInitialized = _gameRules != null;
     }
 
-    // 第一種 HUD (暖身/準備)，完全保留您的原始邏輯
     private void ShowHud(string html)
     {
         foreach (var p in Utilities.GetPlayers())
@@ -148,9 +142,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void OnTick()
     {
-        // 【新增】呼叫寫在檔案二的第二種 HUD 渲染與黑魔法
-        UpdateRoundStartHud();
-        ProcessBlackMagic();
+        // 呼叫檔案二：渲染 20 勝計分板 (完全獨立，不影響下方邏輯)
+        HUD_OnTick();
 
         if (!_gameRulesInitialized) InitializeGameRules();
 
@@ -237,8 +230,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Continue;
         });
 
-        // 【新增】註冊回合開始事件 (觸發第二種 HUD)
-        RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
+        // 呼叫檔案二：註冊回合開始事件來顯示計分板
+        RegisterEventHandler<EventRoundStart>(HUD_OnEventRoundStart);
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
@@ -347,12 +340,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             _isServerShuttingDown = false;
             _gameRules = null;
-            _gameRulesProxy = null;
             _gameRulesInitialized = false;
-            _bShowingRoundStartHud = false;
             
             _cachedTeamT = null;
             _cachedTeamCT = null;
+
+            HUD_OnMapStart(); // 通知檔案二重置
 
             ResetMatchState();
             Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
@@ -365,22 +358,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             InitializeGameRules();
         }
-    }
-
-    // === 【新增】負責在回合開始觸發 30 勝 HUD 與 2 秒洗除計時器 ===
-    private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
-    {
-        // 只有正式比賽中才會顯示
-        if (!_isMatchLive) return HookResult.Continue;
-
-        _bShowingRoundStartHud = true;
-        
-        AddTimer(Config.RoundStartHudDuration, () =>
-        {
-            ClearRoundStartHud(); 
-        });
-
-        return HookResult.Continue;
     }
 
     private int GetDynamicRequiredPlayers()
@@ -449,8 +426,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _liveTimer?.Kill();
         _liveTimer = null;
 
-        // 【新增】中斷比賽時，連帶把計分板洗乾淨
-        ClearRoundStartHud();
+        HUD_Clear(); // 呼叫檔案二：有人逃跑時，強制洗掉計分板
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
 
@@ -533,7 +509,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             char c = rawArg[i];
             if (c == '"' || c == ' ') continue; 
-            if (c == '!' || c == '/') { isCommand = true; break; } 
+            if (c == '!' || c == '/') { isCommand = true; break; } // 加入了 '/' 以相容指令判斷
             break; 
         }
 
