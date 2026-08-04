@@ -38,14 +38,14 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    // 獨立秒數設定 (對齊你提供的 JSON 命名)
-    [JsonPropertyName("HudDuration_Prep")] public float HudDuration_Prep { get; set; } = 5.0f; // JSON若無，框架會自動補上
+    // 獨立秒數設定
+    [JsonPropertyName("HudDuration_Prep")] public float HudDuration_Prep { get; set; } = 5.0f; 
     [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
     [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
     [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
     [JsonPropertyName("Live_Execute_Delay")] public float Live_Execute_Delay { get; set; } = 4.0f;
 
-    // HTML HUD 文本設定 (完全對齊你 JSON 內的自訂樣式與文字)
+    // HTML HUD 文本設定 (已完整解碼為中文與 HTML)
     [JsonPropertyName("HudHtml_Prep1v1_Line1")] 
     public string HudHtml_Prep1v1_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>1 v 1</font> 單 挑 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
     
@@ -76,7 +76,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line2")] 
     public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
-    // 補回回合開始計分板設定
     [JsonPropertyName("HudHtml_RoundStart_Title")]
     public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
 
@@ -90,7 +89,7 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.70_JSON_Synced_Final";
+    public override string ModuleVersion => "8.75_JSON_Decoded";
     public override string ModuleAuthor => "Optimized";
     public override string ModuleDescription => "完美同步 JSON 設定，涵蓋單一防殘影 HUD 系統與計分板功能";
 
@@ -232,7 +231,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager JSON Sync 版 (包含 RoundStart HUD) 啟動！");
+        Console.WriteLine("  LiteMatchManager JSON 繁體中文反解碼版 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -387,7 +386,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                 }
 
-                // 配合你的 HUD 設定，將防卡圖的容錯分數從 20 提高到 30 勝
                 if (_cachedTeamT is { Score: >= 30 } || _cachedTeamCT is { Score: >= 30 }) return;
 
                 int activeT = 0, activeCT = 0;
@@ -412,7 +410,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveTimer?.Kill();
         _liveTimer = null;
 
-        // 套用更新後的 HudDuration_MatchAbort 秒數
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
@@ -675,11 +672,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
             string hudStartText = $"{Config.HudHtml_Round1_Line1}<br>{Config.HudHtml_Round1_Line2}<br>";
             
-            // 套用更新後的 HudDuration_MatchStart 秒數
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
-            
-            // 配合防卡圖與計分板設定，公頻廣播改為 30 勝
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}３０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
@@ -899,7 +893,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _pendingInitialReminders.Clear();
         _hasReceivedInitialReminder.Clear();
 
-        // 強制歸零 HUD
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
 
@@ -914,7 +907,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _waitingTimer = AddTimer(Config.WaitingForOpponentInterval, BroadcastWaitingMessage, TimerFlags.REPEAT);
     }
 
-    // 將回合開始計分板的邏輯結合進來！
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
@@ -932,12 +924,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreCT = _cachedTeamCT?.Score ?? 0;
         string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
 
-        // 組裝計分板 HTML
         string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr) + 
                              string.Format(Config.HudHtml_RoundStart_TScore, scoreT) + 
                              string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
 
-        // 使用統一的高效能 HUD 發送通道
         ShowHud(fullHudHtml, Config.RoundStartHudDuration);
 
         return HookResult.Continue;
