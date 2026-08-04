@@ -6,11 +6,65 @@ namespace LiteMatchManager;
 
 public partial class LiteMatchManager
 {
-    // ==========================================
-    // 渲染第二種 HUD (30勝計分板)
-    // ==========================================
-    private void UpdateRoundStartHud()
+    private CCSGameRulesProxy? _hudGameRulesProxy = null;
+    private bool _bShowingRoundStartHud = false;
+
+    // 給檔案一換地圖時呼叫的重置
+    private void HUD_OnMapStart()
     {
+        _hudGameRulesProxy = null;
+        _bShowingRoundStartHud = false;
+    }
+
+    // 給檔案一回合開始時呼叫的計時器
+    private HookResult HUD_OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
+    {
+        if (!_isMatchLive) return HookResult.Continue;
+        
+        _bShowingRoundStartHud = true;
+        
+        AddTimer(Config.RoundStartHudDuration, () =>
+        {
+            HUD_Clear(); 
+        });
+
+        return HookResult.Continue;
+    }
+
+    // 時間到，暴力清除畫面
+    private void HUD_Clear()
+    {
+        _bShowingRoundStartHud = false;
+
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (IsPlayerValidHUD(p))
+            {
+                p.PrintToCenterHtml("<font></font>");
+            }
+        }
+
+        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid && _gameRules != null)
+        {
+            // 黑魔法：瞬間反轉，下一微秒您的主程式 OnTick 就會把它校正回來，藉此製造一次畫面刷新！
+            _gameRules.GameRestart = !_gameRules.GameRestart; 
+            Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+        }
+    }
+
+    // 每一 Tick 渲染計分板
+    private void HUD_OnTick()
+    {
+        // 抓取黑魔法需要的 Proxy
+        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
+        {
+            foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+            {
+                _hudGameRulesProxy = proxy;
+                break;
+            }
+        }
+
         if (!_bShowingRoundStartHud) return;
 
         if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
@@ -40,51 +94,7 @@ public partial class LiteMatchManager
         }
     }
 
-    // ==========================================
-    // 精準清除 30 勝 HUD 殘影
-    // ==========================================
-    private void ClearRoundStartHud()
-    {
-        _bShowingRoundStartHud = false;
-
-        foreach (var p in Utilities.GetPlayers())
-        {
-            if (IsPlayerValidHUD(p))
-            {
-                p.PrintToCenterHtml("<font></font>");
-            }
-        }
-
-        if (_gameRulesProxy != null && _gameRulesProxy.IsValid)
-        {
-            Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
-        }
-    }
-
-    // ==========================================
-    // 黑魔法狀態刷新機制
-    // ==========================================
-    private void ProcessBlackMagic()
-    {
-        _runThisTick = !_runThisTick;
-        if (!_runThisTick) return;
-
-        if (_gameRules != null && _gameRulesProxy != null && _gameRulesProxy.IsValid)
-        {
-            float currentTime = Server.CurrentTime;
-            float restartTime = _gameRules.RestartRoundTime;
-
-            bool expectedState = restartTime < currentTime;
-
-            if (_gameRules.GameRestart != expectedState)
-            {
-                _gameRules.GameRestart = expectedState;
-                Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
-            }
-        }
-    }
-
-    // 專屬於 HUD 的防呆判斷 (絕不影響主程式)
+    // 專屬於 HUD 的防呆判斷
     private static bool IsPlayerValidHUD(CCSPlayerController? player)
     {
         return player != null
