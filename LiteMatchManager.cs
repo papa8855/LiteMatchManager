@@ -52,19 +52,21 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("SpawnWeapons")] 
     public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "weapon_deagle"]; 
 
+    // 【修復】移除 xxxxzzz，還原正常的指令選單
     [JsonPropertyName("Duel_GunMenuCommands")] 
-    public List<string> GunMenuCommands { get; set; } = ["gunxxxxzzz", "gunsxxxxzzz", "weaponxxxxzzz", "weaponsxxxxzzz", "loadoutxxxxzzz"];
+    public List<string> GunMenuCommands { get; set; } = ["gs", "gun", "guns", "weapon", "weapons", "loadout"];
     
     [JsonPropertyName("Duel_ReadyCommands")] 
     public List<string> ReadyCommands { get; set; } = ["r", "ready", "start", "join", "duel"];
 
+    // 【修復】移除投擲物的 xxxxzzz 錯誤
     [JsonPropertyName("Duel_WeaponCommands")] 
     public Dictionary<string, string> WeaponCommands { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
         {"ak", "weapon_ak47"}, {"a4", "weapon_m4a1"}, {"gr", "weapon_galilar"},
         {"a1", "weapon_m4a1_silencer"}, {"awp", "weapon_awp"}, {"ssg", "weapon_ssg08"},
         {"dg", "weapon_deagle"}, {"usp", "weapon_usp_silencer"}, {"gk", "weapon_glock"},
-        {"r8", "weapon_revolver"}, {"flashxxxxzzz", "weapon_flashbang"}, {"smokexxxxzzz", "weapon_smokegrenade"}, {"hexxxxzzz", "weapon_hegrenade"}
+        {"r8", "weapon_revolver"}, {"flash", "weapon_flashbang"}, {"smoke", "weapon_smokegrenade"}, {"he", "weapon_hegrenade"}
     };
 
     [JsonPropertyName("Duel_List")] 
@@ -99,9 +101,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.08_Final_NativeArmor";
+    public override string ModuleVersion => "9.09_Ultra_Optimized";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生效能版：無縫安靜切換 + 原生防彈衣 + 嚴格防呆";
+    public override string ModuleDescription => "極限效能版：解決伺服器抖動 + 指令修復";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -134,6 +136,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
+    private float _nextHudUpdateTime = 0f; // 【效能優化】控制 HUD 更新頻率
 
     // ==========================================
     // 零分配字串比對函數 (取代 LINQ 的 Contains)
@@ -162,8 +165,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         _activeCenterMessage = html;
         _centerMessageExpiration = Server.CurrentTime + duration;
+        _nextHudUpdateTime = 0f; // 強制立即刷新
     }
 
+    // 【效能優化】移除高耗能運算，大幅降低 GetPlayers 的呼叫次數
     private void OnTick()
     {
         if (!_gameRulesInitialized) InitializeGameRules();
@@ -175,9 +180,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
                 shouldFreezeUI = true; 
-                foreach (var p in Utilities.GetPlayers())
+                // 將每秒 64 次的刷新限制為每 0.25 秒一次，徹底解決抖動
+                if (Server.CurrentTime >= _nextHudUpdateTime)
                 {
-                    if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml(_activeCenterMessage);
+                    _nextHudUpdateTime = Server.CurrentTime + 0.25f;
+                    foreach (var p in Utilities.GetPlayers())
+                    {
+                        if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml(_activeCenterMessage);
+                    }
                 }
             }
             else
@@ -195,38 +205,41 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (shouldFreezeUI) _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
             else _gameRules.GameRestart = false; 
         }
+    }
 
-        if (_pendingInitialReminders.Count > 0)
+    // 【效能優化】將倒數提醒從 OnTick 移出，改為獨立定時檢查
+    private void CheckPendingReminders()
+    {
+        if (_pendingInitialReminders.Count == 0) return;
+
+        float currentTime = Server.CurrentTime;
+        List<ulong>? toRemove = null;
+
+        foreach (var kvp in _pendingInitialReminders)
         {
-            float currentTime = Server.CurrentTime;
-            List<ulong>? toRemove = null;
-
-            foreach (var kvp in _pendingInitialReminders)
+            if (currentTime >= kvp.Value)
             {
-                if (currentTime >= kvp.Value)
-                {
-                    ulong steamId = kvp.Key;
-                    toRemove ??= []; 
-                    toRemove.Add(steamId);
+                ulong steamId = kvp.Key;
+                toRemove ??= []; 
+                toRemove.Add(steamId);
 
-                    if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                {
+                    foreach (var p in Utilities.GetPlayers())
                     {
-                        foreach (var p in Utilities.GetPlayers())
+                        if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
                         {
-                            if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
-                            {
-                                _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
-                                int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
-                                p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                                break;
-                            }
+                            _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
+                            int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
+                            p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                            break;
                         }
                     }
                 }
             }
-
-            if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
         }
+
+        if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
     }
 
     public void OnConfigParsed(LiteMatchConfig config)
@@ -250,7 +263,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v9.08 (終極原生版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v9.09 (指令修復與效能極限版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -261,6 +274,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddCommandListener("drop", (player, info) => HookResult.Handled);
         
         RegisterListener<Listeners.OnTick>(OnTick);
+        AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT); // 註冊優化後的計時器
+
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
@@ -921,6 +936,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _hasReceivedInitialReminder.Clear();
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
+        _nextHudUpdateTime = 0f; // 重置 HUD 更新計時
 
         _liveTimer?.Kill(); _liveTimer = null;
         _privateCheckTimer?.Kill();
