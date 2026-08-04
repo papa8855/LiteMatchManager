@@ -9,6 +9,7 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
+// 【修改處】已徹底移除 using System.Linq; 實現 0 垃圾編譯
 
 namespace LiteMatchManager;
 
@@ -66,8 +67,9 @@ public class LiteMatchConfig : BasePluginConfig
     public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'>✦ 戰 鬥 開 始 ✦</font>";
 
     [JsonPropertyName("HudHtml_Round1_Line2")] 
-    public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'>率 先 取 得 </font><font class='fontSize-xxl' color='lime'><b>３０</b></font><font class='fontSize-xxl' color='white'> 勝 者 為 贏 家</font>";
+    public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'>率 先 取 得 </font><font class='fontSize-xxl' color='lime'><b>２０</b></font><font class='fontSize-xxl' color='white'> 勝 者 為 贏 家</font>";
 
+    // === 【新增】第二種 HUD 的設定 ===
     [JsonPropertyName("RoundStartHudDuration")] 
     public float RoundStartHudDuration { get; set; } = 2.0f;
 
@@ -81,13 +83,13 @@ public class LiteMatchConfig : BasePluginConfig
     public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
-// 加入 partial 確保可以跟檔案二完美結合
+// 加上 partial 讓它可以和 HUD 檔案相通
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.54_UltimateFix";
+    public override string ModuleVersion => "8.53_UltimateFix";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純版 + 30勝免死金牌 (完美防卡圖) + 轉發聊天 + 獨立雙重HUD";
+    public override string ModuleDescription => "純 8.53 版 + 20勝免死金牌 (完美防卡圖) + 轉發聊天 + 獨立雙重HUD";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
@@ -111,13 +113,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
     private CCSGameRules? _gameRules;
-    private CCSGameRulesProxy? _gameRulesProxy; // 黑魔法專用
     private bool _gameRulesInitialized;
 
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
+    // === 【新增】跨檔案共用的狀態變數 ===
+    private CCSGameRulesProxy? _gameRulesProxy = null;
     private bool _bShowingRoundStartHud = false;
+    private bool _runThisTick = false;
 
     private void InitializeGameRules()
     {
@@ -125,15 +129,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         
         foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
-            _gameRulesProxy = proxy; // 抓取 Proxy 實體
+            _gameRulesProxy = proxy; // 【新增】抓取黑魔法需要的 Proxy
             _gameRules = proxy.GameRules;
             break;
         }
         
-        _gameRulesInitialized = _gameRules != null;
+        _gameRulesInitialized = _gameRules != null && _gameRulesProxy != null;
     }
 
-    // 第一種 HUD：完全保留您原本的寫法，絕不干涉！
+    // 第一種 HUD (暖身/準備)，完全保留您的原始邏輯
     private void ShowHud(string html)
     {
         foreach (var p in Utilities.GetPlayers())
@@ -144,14 +148,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void OnTick()
     {
-        // ==========================================
-        // 呼叫檔案二：第二種 HUD (30勝計分板) 的渲染
-        // ==========================================
+        // 【新增】呼叫寫在檔案二的第二種 HUD 渲染與黑魔法
         UpdateRoundStartHud();
+        ProcessBlackMagic();
 
-        // ==========================================
-        // 以下為您原本的未準備玩家踢除邏輯 (完全保留)
-        // ==========================================
         if (!_gameRulesInitialized) InitializeGameRules();
 
         if (_gameRules != null)
@@ -217,7 +217,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v8.54 (雙重獨立HUD + 黑魔法版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v8.53 (究極防卡圖 20勝版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -237,6 +237,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Continue;
         });
 
+        // 【新增】註冊回合開始事件 (觸發第二種 HUD)
         RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
@@ -348,10 +349,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _gameRules = null;
             _gameRulesProxy = null;
             _gameRulesInitialized = false;
+            _bShowingRoundStartHud = false;
             
             _cachedTeamT = null;
             _cachedTeamCT = null;
-            _bShowingRoundStartHud = false;
 
             ResetMatchState();
             Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
@@ -366,13 +367,14 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
+    // === 【新增】負責在回合開始觸發 30 勝 HUD 與 2 秒洗除計時器 ===
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
+        // 只有正式比賽中才會顯示
         if (!_isMatchLive) return HookResult.Continue;
 
         _bShowingRoundStartHud = true;
         
-        // 2秒後觸發檔案二的洗除邏輯
         AddTimer(Config.RoundStartHudDuration, () =>
         {
             ClearRoundStartHud(); 
@@ -422,7 +424,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
                 if (_cachedTeamT != null && _cachedTeamCT != null)
                 {
-                    if (_cachedTeamCT.Score >= 30 || _cachedTeamT.Score >= 30) return; 
+                    if (_cachedTeamCT.Score >= 20 || _cachedTeamT.Score >= 20) return; 
                 }
 
                 int activeT = 0, activeCT = 0;
@@ -446,9 +448,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         
         _liveTimer?.Kill();
         _liveTimer = null;
-        
-        // 若中途退出也確保畫面清空
-        ClearRoundStartHud(); 
+
+        // 【新增】中斷比賽時，連帶把計分板洗乾淨
+        ClearRoundStartHud();
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
 
@@ -531,7 +533,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             char c = rawArg[i];
             if (c == '"' || c == ' ') continue; 
-            if (c == '!' || c == '/') { isCommand = true; break; }
+            if (c == '!' || c == '/') { isCommand = true; break; } 
             break; 
         }
 
@@ -739,7 +741,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             ShowHud(hudStartText);
 
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}３０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}２０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
             
             _privateCheckTimer?.Kill();
             _privateCheckTimer = null;
@@ -855,7 +857,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private void OnGsCommand(CCSPlayerController? player, CommandInfo info)
     {
         if (player is null || !player.IsValid) return;
-        player.PrintToChat($" {ChatColors.Orange} 禁 用 所 有 小 槍 、請 在 聊 第一欄位輸入 您 要 的 武 器");
+        player.PrintToChat($" {ChatColors.Orange} 禁 用 所 有 小 槍 、請 在 聊 天 欄 位 輸 入 您 要 的 武 器");
         player.PrintToChat($" ---------------------------------------------------------------");
         player.PrintToChat($" [ {ChatColors.Green}狙擊{ChatColors.White} ] {ChatColors.Green}!SSG {ChatColors.White}[ SSG 08 鳥狙 ] 、{ChatColors.Green}!AWP {ChatColors.White}[ AWP狙擊步槍 ]");
     }
@@ -1036,16 +1038,5 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     {
         _isServerShuttingDown = true;
         base.Unload(hotReload);
-    }
-
-    public static bool IsPlayerValid(CCSPlayerController? player)
-    {
-        return player != null
-            && player.IsValid
-            && !player.IsBot
-            && player.Pawn != null
-            && player.Pawn.IsValid
-            && player.Connected == PlayerConnectedState.Connected
-            && !player.IsHLTV;
     }
 }
