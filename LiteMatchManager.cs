@@ -46,7 +46,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("LiveConfigName")] public string LiveConfigName { get; set; } = "live.cfg";
     [JsonPropertyName("Duel_MapChangeDelay")] public int MapChangeDelay { get; set; } = 5;
     
-    // 預設地圖已完全更新為你的清單
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = [
         "Aim_redline_vieforit:3290337428", 
@@ -55,7 +54,6 @@ public class LiteMatchConfig : BasePluginConfig
         "5e_akm4_aim_duel:3250543760"
     ];
 
-    // 預設給予武器已更新
     [JsonPropertyName("SpawnWeapons")] 
     public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "weapon_deagle", "weapon_ak47", "item_assaultsuit"]; 
 
@@ -65,7 +63,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("Duel_ReadyCommands")] 
     public List<string> ReadyCommands { get; set; } = ["r", "ready", "start", "join", "duel"];
 
-    // 聊天室選槍指令已更新
     [JsonPropertyName("Duel_WeaponCommands")] 
     public Dictionary<string, string> WeaponCommands { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -75,7 +72,6 @@ public class LiteMatchConfig : BasePluginConfig
         {"r8", "weapon_revolver"}
     };
 
-    // 對戰階段參數已完全更新
     [JsonPropertyName("Duel_List")] 
     public List<DuelModeConfig> MatchModes { get; set; } = [
         new DuelModeConfig { Name = "手槍", WinLimit = 5, DisplayTarget = "5 勝", Armor = 1, SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
@@ -108,14 +104,26 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.14_Custom_Defaults";
+    public override string ModuleVersion => "9.16_Optimized_Performance_VisibleCommands";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "套用使用者自訂預設配置";
+    public override string ModuleDescription => "效能最佳化與對話顯示版";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
     private int _currentPhaseIndex = 0; 
+    
+    // 【效能優化】：在此宣告用於高速查表的 HashSet
+    private HashSet<string> _readyCommandsSet = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _gunMenuCommandsSet = new(StringComparer.OrdinalIgnoreCase);
+    
+    // 【效能優化】：手槍清單的靜態查表，替換 ReplaceWeapon 裡的字串比對
+    private static readonly HashSet<string> PistolWeapons = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "weapon_usp_silencer", "weapon_glock", "weapon_deagle", "weapon_revolver",
+        "weapon_p250", "weapon_tec9", "weapon_fiveseven", "weapon_cz75a",
+        "weapon_elite", "weapon_hkp2000"
+    };
     
     private HashSet<ulong> _readyPlayers = new(64);
     private Dictionary<ulong, int> _playerUnreadyTime = new(64); 
@@ -141,6 +149,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
+    // 保留這個給 OnPlayerSpawn 和 TryGiveWeaponByCommand 裡數量極少的清單使用
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -179,12 +188,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // 【效能優化】：減少 Utilities.GetPlayers() 呼叫次數
     private void CheckPendingReminders()
     {
         if (_pendingInitialReminders.Count == 0) return;
 
         float currentTime = Server.CurrentTime;
         List<ulong>? toRemove = null;
+
+        var allPlayers = Utilities.GetPlayers();
 
         foreach (var kvp in _pendingInitialReminders)
         {
@@ -196,7 +208,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                 if (!_isMatchLive && !_readyPlayers.Contains(steamId))
                 {
-                    foreach (var p in Utilities.GetPlayers())
+                    foreach (var p in allPlayers)
                     {
                         if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
                         {
@@ -219,6 +231,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
         config.WeaponCommands = caseInsensitiveDict;
 
+        // 【效能優化】：載入設定時直接生成高速查詢表
+        _readyCommandsSet = new HashSet<string>(config.ReadyCommands, StringComparer.OrdinalIgnoreCase);
+        _gunMenuCommandsSet = new HashSet<string>(config.GunMenuCommands, StringComparer.OrdinalIgnoreCase);
+
         Config = config;
         _cachedPrefix = config.ChatPrefix
             .Replace("{White}", ChatColors.White.ToString())
@@ -234,7 +250,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v9.14 (套用完美自訂預設) 啟動！");
+        Console.WriteLine("  LiteMatchManager (效能優化 + 顯示指令版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -498,10 +514,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (command == "nextmap" && AdminManager.PlayerHasPermissions(player, "@css/root"))
         {
-            TriggerMapChange(); return HookResult.Handled;
+            TriggerMapChange(); return HookResult.Handled; // 管理員指令繼續隱藏
         }
 
-        if (IsStringInList(Config.ReadyCommands, command))
+        // 【恢復顯示】：改回 Continue，這樣玩家打 !r 就會顯示在聊天室讓對手看到
+        if (_readyCommandsSet.Contains(command))
         {
             if (!_isMatchLive) HandlePlayerReady(player);
             return HookResult.Continue; 
@@ -514,7 +531,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (Config.EnableChatWeaponCommands)
         {
-            if (IsStringInList(Config.GunMenuCommands, command))
+            // 【恢復顯示】：改回 Continue，這樣玩家打 !ak 或 !gs 也會顯示出來
+            if (_gunMenuCommandsSet.Contains(command))
             {
                 OnGsCommand(player); return HookResult.Continue;
             }
@@ -524,6 +542,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 return HookResult.Continue;
             }
         }
+        
+        // 若輸入不認識的指令 (例如 !admin)，放行給其他插件處理
         return HookResult.Continue;
     }
 
@@ -761,9 +781,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return HookResult.Continue;
     }
 
+    // 【效能優化】：替換成光速判斷，免除了原本近 60 次的字串比對
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
         if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons is not { } weapons) return;
+
+        bool isNewWeaponPistol = PistolWeapons.Contains(newWeapon);
 
         foreach (var weaponHandle in weapons)
         {
@@ -772,8 +795,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 string wName = weapon.DesignerName;
                 if (string.IsNullOrEmpty(wName) || wName.Contains("knife") || wName.Contains("bayonet") || wName.Contains("c4")) continue;
 
-                bool isNewWeaponPistol = newWeapon.Contains("usp") || newWeapon.Contains("glock") || newWeapon.Contains("deagle") || newWeapon.Contains("revolver") || newWeapon.Contains("p250") || newWeapon.Contains("tec9") || newWeapon.Contains("fiveseven") || newWeapon.Contains("cz75a") || newWeapon.Contains("elite") || newWeapon.Contains("hkp2000");
-                bool isCurrentWeaponPistol = wName.Contains("usp") || wName.Contains("glock") || wName.Contains("deagle") || wName.Contains("revolver") || wName.Contains("p250") || wName.Contains("tec9") || wName.Contains("fiveseven") || wName.Contains("cz75a") || wName.Contains("elite") || wName.Contains("hkp2000");
+                bool isCurrentWeaponPistol = PistolWeapons.Contains(wName);
 
                 if (isNewWeaponPistol == isCurrentWeaponPistol)
                 {
