@@ -9,12 +9,14 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
-// 【修正】徹底拔除 using System.Linq; 拒絕任何拖慢效能的擴充方法
 
 namespace LiteMatchManager;
 
 #pragma warning disable CS8618
 
+// ==========================================
+// 階段對戰 (Phase) 專用設定類別
+// ==========================================
 public class DuelModeConfig
 {
     [JsonPropertyName("Duel_WinLimit")] public int WinLimit { get; set; } = 5;
@@ -97,9 +99,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.07_ZeroAlloc_NoLinq";
+    public override string ModuleVersion => "9.08_Final_NativeArmor";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "零分配效能版：無縫安靜切換 + 嚴格防呆與動態 HUD";
+    public override string ModuleDescription => "原生效能版：無縫安靜切換 + 原生防彈衣 + 嚴格防呆";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -133,7 +135,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
-    // 【全新極致效能函數】取代 LINQ 的 Contains，做到真正的 0 Bytes 記憶體分配
+    // ==========================================
+    // 零分配字串比對函數 (取代 LINQ 的 Contains)
+    // ==========================================
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -246,7 +250,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v9.07 (零分配純淨版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v9.08 (終極原生版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -418,7 +422,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveTimer?.Kill(); _liveTimer = null;
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 重 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
         Server.ExecuteCommand("mp_warmup_start");
         
         var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
@@ -515,7 +519,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             TriggerMapChange(); return HookResult.Handled;
         }
 
-        // 【修正】使用自己寫的 0 allocation 函數
         if (IsStringInList(Config.ReadyCommands, command))
         {
             if (!_isMatchLive) HandlePlayerReady(player);
@@ -529,7 +532,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (Config.EnableChatWeaponCommands)
         {
-            // 【修正】使用自己寫的 0 allocation 函數
             if (IsStringInList(Config.GunMenuCommands, command))
             {
                 OnGsCommand(player); return HookResult.Continue;
@@ -555,7 +557,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         var phase = Config.MatchModes[_currentPhaseIndex];
         
-        // 【修正】使用自己寫的 0 allocation 函數
         bool isPrimary = IsStringInList(phase.PrimaryWeapons, weaponName);
         bool isSecondary = IsStringInList(phase.SecondaryWeapons, weaponName);
 
@@ -739,25 +740,23 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     var phase = Config.MatchModes[_currentPhaseIndex];
                     
-                   pawn.Health = phase.Health;
-
-              if (pawn.ItemServices != null)
-              {
-              if (phase.Armor == 0) { pawn.ArmorValue = 0; pawn.ItemServices.HasHelmet = false; }
-              else if (phase.Armor == 1) { pawn.ArmorValue = 100; pawn.ItemServices.HasHelmet = false; }
-              else if (phase.Armor == 2) { pawn.ArmorValue = 100; pawn.ItemServices.HasHelmet = true; }
-              }
+                    pawn.Health = phase.Health;
+                    
+                    // ==========================================
+                    // 原生物品發放：使用引擎底層指令配發防彈衣
+                    // ==========================================
+                    if (phase.Armor == 0) { pawn.ArmorValue = 0; }
+                    else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
+                    else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
 
                     player.GiveNamedItem("weapon_knife"); 
 
                     string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
-                    // 【修正】使用 IsStringInList
                     if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && IsStringInList(phase.SecondaryWeapons, prefSec))
                         secToGive = prefSec;
                     if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
 
                     string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
-                    // 【修正】使用 IsStringInList
                     if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && IsStringInList(phase.PrimaryWeapons, prefPri))
                         priToGive = prefPri;
                     if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
