@@ -1,26 +1,33 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Utils;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace LiteMatchManager;
 
 public partial class LiteMatchManager
 {
     private bool _bShowingRoundStartHud = false;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _hudTimer = null;
 
     private void HUD_OnMapStart()
     {
         _bShowingRoundStartHud = false;
+        _hudTimer?.Kill();
+        _hudTimer = null;
     }
 
     private HookResult HUD_OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
         
+        // 如果上一局的計時器還活著，先殺掉它避免疊加
+        _hudTimer?.Kill();
+        
         _bShowingRoundStartHud = true;
         
-        // 2 秒
-        AddTimer(2.0f, () =>
+        // 2 秒後觸發強制清除
+        _hudTimer = AddTimer(2.0f, () =>
         {
             HUD_Clear(); 
         });
@@ -67,13 +74,15 @@ public partial class LiteMatchManager
     private void HUD_Clear()
     {
         _bShowingRoundStartHud = false;
+        _hudTimer?.Kill();
+        _hudTimer = null;
 
         foreach (var player in Utilities.GetPlayers())
         {
             // 一樣只針對場上的 T 和 CT 進行清除
             if (IsPlayerValidHUD(player) && (player.TeamNum == 2 || player.TeamNum == 3))
             {
-                // 【頻道覆寫殺招】用原生文字頻道的空白，強行蓋掉 HTML 的 5 秒限制
+                // 【終極殺招】用 HTML 頻道傳送空字串與 0 秒持續時間，強行突破 5 秒限制瞬間關閉
                 player.PrintToCenterHtml("", 0); 
             }
         }
