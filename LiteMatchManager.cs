@@ -20,6 +20,7 @@ namespace LiteMatchManager;
 public class DuelModeConfig
 {
     [JsonPropertyName("Duel_WinLimit")] public int WinLimit { get; set; } = 5;
+    [JsonPropertyName("Duel_DisplayTarget")] public string DisplayTarget { get; set; } = "5 勝"; 
     [JsonPropertyName("Duel_Name")] public string Name { get; set; } = "手槍";
     [JsonPropertyName("Duel_Health")] public int Health { get; set; } = 100;
     [JsonPropertyName("Duel_Armor")] public int Armor { get; set; } = 1; 
@@ -30,8 +31,7 @@ public class DuelModeConfig
 
 public class LiteMatchConfig : BasePluginConfig
 {
-    [JsonPropertyName("MinPlayersToStart")] public int MinPlayersToStart { get; set; } = 4;
-    [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 3; 
+    [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 2; 
     [JsonPropertyName("KickUnreadyPlayerTime")] public int KickUnreadyPlayerTime { get; set; } = 360;
     
     [JsonPropertyName("UnreadyReminderInterval")] public int UnreadyReminderInterval { get; set; } = 60;
@@ -39,39 +39,48 @@ public class LiteMatchConfig : BasePluginConfig
     
     [JsonPropertyName("WaitingForOpponentInterval")] public int WaitingForOpponentInterval { get; set; } = 30;
 
-    [JsonPropertyName("ChatPrefix")] public string ChatPrefix { get; set; } = "[ {Green}狙 擊 模 式{White} ]";
+    [JsonPropertyName("ChatPrefix")] public string ChatPrefix { get; set; } = "[ {Green}對 戰 系 統{White} ]";
     [JsonPropertyName("EnableChatWeaponCommands")] public bool EnableChatWeaponCommands { get; set; } = true;
     
     [JsonPropertyName("WarmupConfigName")] public string WarmupConfigName { get; set; } = "warmup.cfg";
     [JsonPropertyName("LiveConfigName")] public string LiveConfigName { get; set; } = "live.cfg";
     [JsonPropertyName("Duel_MapChangeDelay")] public int MapChangeDelay { get; set; } = 5;
     
+    // 預設地圖已完全更新為你的清單
     [JsonPropertyName("MapList")] 
-    public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
+    public List<string> MapList { get; set; } = [
+        "Aim_redline_vieforit:3290337428", 
+        "aimpro_vieforit:3290753343", 
+        "5e_aim_map:3250592791", 
+        "5e_akm4_aim_duel:3250543760"
+    ];
 
+    // 預設給予武器已更新
     [JsonPropertyName("SpawnWeapons")] 
-    public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "weapon_deagle"]; 
+    public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "weapon_deagle", "weapon_ak47", "item_assaultsuit"]; 
 
     [JsonPropertyName("Duel_GunMenuCommands")] 
-    public List<string> GunMenuCommands { get; set; } = ["gunxxxxzzz", "gunsxxxxzzz", "weaponxxxxzzz", "weaponsxxxxzzz", "loadoutxxxxzzz"];
+    public List<string> GunMenuCommands { get; set; } = ["gs", "GS"];
     
     [JsonPropertyName("Duel_ReadyCommands")] 
     public List<string> ReadyCommands { get; set; } = ["r", "ready", "start", "join", "duel"];
 
+    // 聊天室選槍指令已更新
     [JsonPropertyName("Duel_WeaponCommands")] 
     public Dictionary<string, string> WeaponCommands { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
         {"ak", "weapon_ak47"}, {"a4", "weapon_m4a1"}, {"gr", "weapon_galilar"},
         {"a1", "weapon_m4a1_silencer"}, {"awp", "weapon_awp"}, {"ssg", "weapon_ssg08"},
         {"dg", "weapon_deagle"}, {"usp", "weapon_usp_silencer"}, {"gk", "weapon_glock"},
-        {"r8", "weapon_revolver"}, {"flashxxxxzzz", "weapon_flashbang"}, {"smokexxxxzzz", "weapon_smokegrenade"}, {"hexxxxzzz", "weapon_hegrenade"}
+        {"r8", "weapon_revolver"}
     };
 
+    // 對戰階段參數已完全更新
     [JsonPropertyName("Duel_List")] 
     public List<DuelModeConfig> MatchModes { get; set; } = [
-        new DuelModeConfig { Name = "手槍", WinLimit = 5, Armor = 1, SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
-        new DuelModeConfig { Name = "狙擊", WinLimit = 7, Armor = 2, PrimaryWeapons = ["weapon_awp", "weapon_ssg08"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
-        new DuelModeConfig { Name = "步槍", WinLimit = 47, Armor = 2, PrimaryWeapons = ["weapon_ak47", "weapon_m4a1", "weapon_galilar", "weapon_m4a1_silencer"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] }
+        new DuelModeConfig { Name = "手槍", WinLimit = 5, DisplayTarget = "5 勝", Armor = 1, SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
+        new DuelModeConfig { Name = "狙擊", WinLimit = 7, DisplayTarget = "7 勝", Armor = 2, PrimaryWeapons = ["weapon_awp", "weapon_ssg08"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
+        new DuelModeConfig { Name = "步槍", WinLimit = 47, DisplayTarget = "總回合30", Armor = 2, PrimaryWeapons = ["weapon_ak47", "weapon_m4a1", "weapon_galilar", "weapon_m4a1_silencer"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] }
     ];
 
     [JsonPropertyName("HudDuration_Prep")] public float HudDuration_Prep { get; set; } = 5.0f; 
@@ -84,24 +93,24 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Prep1v1_Line2")] public string HudHtml_Prep1v1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / 2</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
     [JsonPropertyName("HudHtml_Prep2v2_Line1")] public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>2 v 2</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
     [JsonPropertyName("HudHtml_Prep2v2_Line2")] public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
-    [JsonPropertyName("HudHtml_Prep3v3_Line1")] public string HudHtml_Prep3v3_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發<font class='fontSize-l' color='gold'>3 v 3</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
-    [JsonPropertyName("HudHtml_Prep3v3_Line2")] public string HudHtml_Prep3v3_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    
     [JsonPropertyName("HudHtml_MatchAbort_Line1")] public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 逃 跑 ， 戰 鬥 已 終 止</font></b><br>";
     [JsonPropertyName("HudHtml_MatchAbort_Line2")] public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
     
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ {0} 戰 鬥 開 始 ★</font></b><br>";
     [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>{1}</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
-    [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式 / 搶<font class='fontSize-l' color='Green'><b>{2}</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
+    
+    [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='gold'><font color='red'>{0}</font> 模式 / <font class='fontSize-l' color='Green'><b>{1}</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
-    [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>{1}</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
+    [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br>";
 }
 
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.08_Final_NativeArmor";
+    public override string ModuleVersion => "9.14_Custom_Defaults";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生效能版：無縫安靜切換 + 原生防彈衣 + 嚴格防呆";
+    public override string ModuleDescription => "套用使用者自訂預設配置";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -126,18 +135,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
-    private CCSGameRules? _gameRules;
-    private bool _gameRulesInitialized;
-
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
-    // ==========================================
-    // 零分配字串比對函數 (取代 LINQ 的 Contains)
-    // ==========================================
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -148,16 +151,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return false;
     }
 
-    private void InitializeGameRules()
-    {
-        if (_gameRulesInitialized) return;
-        foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
-        {
-            _gameRules = proxy.GameRules; break;
-        }
-        _gameRulesInitialized = _gameRules is not null;
-    }
-
     private void ShowHud(string html, float duration)
     {
         _activeCenterMessage = html;
@@ -166,15 +159,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void OnTick()
     {
-        if (!_gameRulesInitialized) InitializeGameRules();
-
-        bool shouldFreezeUI = false;
-
         if (!string.IsNullOrEmpty(_activeCenterMessage))
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
-                shouldFreezeUI = true; 
                 foreach (var p in Utilities.GetPlayers())
                 {
                     if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml(_activeCenterMessage);
@@ -189,44 +177,40 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 }
             }
         }
+    }
 
-        if (_gameRules is not null)
+    private void CheckPendingReminders()
+    {
+        if (_pendingInitialReminders.Count == 0) return;
+
+        float currentTime = Server.CurrentTime;
+        List<ulong>? toRemove = null;
+
+        foreach (var kvp in _pendingInitialReminders)
         {
-            if (shouldFreezeUI) _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
-            else _gameRules.GameRestart = false; 
-        }
-
-        if (_pendingInitialReminders.Count > 0)
-        {
-            float currentTime = Server.CurrentTime;
-            List<ulong>? toRemove = null;
-
-            foreach (var kvp in _pendingInitialReminders)
+            if (currentTime >= kvp.Value)
             {
-                if (currentTime >= kvp.Value)
-                {
-                    ulong steamId = kvp.Key;
-                    toRemove ??= []; 
-                    toRemove.Add(steamId);
+                ulong steamId = kvp.Key;
+                toRemove ??= []; 
+                toRemove.Add(steamId);
 
-                    if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                {
+                    foreach (var p in Utilities.GetPlayers())
                     {
-                        foreach (var p in Utilities.GetPlayers())
+                        if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
                         {
-                            if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
-                            {
-                                _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
-                                int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
-                                p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                                break;
-                            }
+                            _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
+                            int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
+                            p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                            break;
                         }
                     }
                 }
             }
-
-            if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
         }
+
+        if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
     }
 
     public void OnConfigParsed(LiteMatchConfig config)
@@ -250,7 +234,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v9.08 (終極原生版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v9.14 (套用完美自訂預設) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -261,6 +245,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddCommandListener("drop", (player, info) => HookResult.Handled);
         
         RegisterListener<Listeners.OnTick>(OnTick);
+        AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
+
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
@@ -342,8 +328,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         RegisterListener<Listeners.OnMapStart>(mapName => 
         {
             _isServerShuttingDown = false;
-            _gameRules = null;
-            _gameRulesInitialized = false;
             _cachedTeamT = null;
             _cachedTeamCT = null;
 
@@ -351,8 +335,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             Console.WriteLine($"[LiteMatch] 地圖載入完成！執行暖身：{Config.WarmupConfigName}");
             Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
         });
-
-        if (hotReload) InitializeGameRules();
     }
 
     private int GetDynamicRequiredPlayers()
@@ -618,8 +600,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string prepString = targetPlayers switch
         {
             <= 2 => $"{Config.HudHtml_Prep1v1_Line1}<br>{string.Format(Config.HudHtml_Prep1v1_Line2, _readyPlayers.Count, missingPlayers)}<br>",
-            <= 4 => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>",
-            _ => $"{Config.HudHtml_Prep3v3_Line1}<br>{string.Format(Config.HudHtml_Prep3v3_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
+            _ => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
         };
 
         ShowHud(prepString, Config.HudDuration_Prep);
@@ -651,8 +632,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string prepString = targetPlayers switch
             {
                 <= 2 => $"{Config.HudHtml_Prep1v1_Line1}<br>{string.Format(Config.HudHtml_Prep1v1_Line2, _readyPlayers.Count, missingPlayers)}<br>",
-                <= 4 => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>",
-                _ => $"{Config.HudHtml_Prep3v3_Line1}<br>{string.Format(Config.HudHtml_Prep3v3_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
+                _ => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
             };
             ShowHud(prepString, Config.HudDuration_Prep);
         }
@@ -683,13 +663,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
-            string winLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].WinLimit.ToString() : "20";
+            
+            string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
-            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, phaseName)}<br>{string.Format(Config.HudHtml_Round1_Line2, winLimit)}<br>";
+            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, phaseName)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
-            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}第一階段：{ChatColors.Gold}【{phaseName}】{ChatColors.Orange} 搶 {ChatColors.Green}{winLimit}{ChatColors.Orange} 勝！");
+            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 傢 已 準 備，{modeText} 比 賽 開 始");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}第一階段：{ChatColors.Gold}【{phaseName}】{ChatColors.Orange} {ChatColors.Green}{displayLimit}");
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
@@ -698,7 +679,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _liveTimer?.Kill();
             _liveTimer = AddTimer(Config.Live_Execute_Delay, () => 
             {
-                Server.NextFrame(() => { Server.ExecuteCommand($"exec {Config.LiveConfigName}"); });
+                Server.NextFrame(() => { 
+                    Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
+                });
                 _liveTimer = null;
             });
         }
@@ -742,9 +725,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     
                     pawn.Health = phase.Health;
                     
-                    // ==========================================
-                    // 原生物品發放：使用引擎底層指令配發防彈衣
-                    // ==========================================
                     if (phase.Armor == 0) { pawn.ArmorValue = 0; }
                     else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
                     else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
@@ -951,9 +931,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         var currentPhase = Config.MatchModes[_currentPhaseIndex];
 
-        string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", currentPhase.Name, currentPhase.WinLimit) + 
+        string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, currentPhase.Name, currentPhase.DisplayTarget) + 
                              string.Format(Config.HudHtml_RoundStart_TScore, scoreT) + 
-                             string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT, currentPhase.WinLimit);
+                             string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
 
         ShowHud(fullHudHtml, Config.RoundStartHudDuration);
 
