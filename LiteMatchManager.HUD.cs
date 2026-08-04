@@ -1,16 +1,16 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Utils;
 
 namespace LiteMatchManager;
 
 public partial class LiteMatchManager
 {
     // ==========================================
-    // 這個函數由主程式的 OnTick 每秒呼叫，負責渲染第二個 HUD
+    // 渲染第二種 HUD (30勝計分板)
     // ==========================================
     private void UpdateRoundStartHud()
     {
-        // 只有 _isMatchLive (主程式開賽) 且回合剛開始，才會是 true
         if (!_bShowingRoundStartHud) return;
 
         if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
@@ -33,33 +33,66 @@ public partial class LiteMatchManager
 
         foreach (var player in Utilities.GetPlayers())
         {
-            if (!IsPlayerValid(player))
-                continue;
-
-            player.PrintToCenterHtml(fullHudHtml);
+            if (IsPlayerValidHUD(player))
+            {
+                player.PrintToCenterHtml(fullHudHtml);
+            }
         }
     }
 
     // ==========================================
-    // 這個函數由主程式的計時器 (2秒) 呼叫，負責暴力清除殘影
+    // 精準清除 30 勝 HUD 殘影
     // ==========================================
     private void ClearRoundStartHud()
     {
         _bShowingRoundStartHud = false;
 
-        // 1. 發送空白標籤，立刻覆蓋當前畫面的 30 勝計分板
         foreach (var p in Utilities.GetPlayers())
         {
-            if (IsPlayerValid(p))
+            if (IsPlayerValidHUD(p))
             {
                 p.PrintToCenterHtml("<font></font>");
             }
         }
 
-        // 2. 引爆黑魔法：強制客戶端同步 GameRules 狀態，斬斷殘影
         if (_gameRulesProxy != null && _gameRulesProxy.IsValid)
         {
             Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
         }
+    }
+
+    // ==========================================
+    // 黑魔法狀態刷新機制
+    // ==========================================
+    private void ProcessBlackMagic()
+    {
+        _runThisTick = !_runThisTick;
+        if (!_runThisTick) return;
+
+        if (_gameRules != null && _gameRulesProxy != null && _gameRulesProxy.IsValid)
+        {
+            float currentTime = Server.CurrentTime;
+            float restartTime = _gameRules.RestartRoundTime;
+
+            bool expectedState = restartTime < currentTime;
+
+            if (_gameRules.GameRestart != expectedState)
+            {
+                _gameRules.GameRestart = expectedState;
+                Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+            }
+        }
+    }
+
+    // 專屬於 HUD 的防呆判斷 (絕不影響主程式)
+    private static bool IsPlayerValidHUD(CCSPlayerController? player)
+    {
+        return player != null
+            && player.IsValid
+            && !player.IsBot
+            && player.Pawn != null
+            && player.Pawn.IsValid
+            && player.Connected == PlayerConnectedState.Connected
+            && !player.IsHLTV;
     }
 }
