@@ -13,7 +13,7 @@ public partial class LiteMatchManager
         
         foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
-            _gameRulesProxy = proxy; // 🔮 存下用來施展黑魔法的 Proxy 實體
+            _gameRulesProxy = proxy; 
             _gameRules = proxy.GameRules;
             break;
         }
@@ -26,6 +26,29 @@ public partial class LiteMatchManager
         foreach (var p in Utilities.GetPlayers())
         {
             if (p != null && p.IsValid && !p.IsBot) p.PrintToCenterHtml(html);
+        }
+    }
+
+    // ==========================================
+    // 專門用來精準清除 30 勝 HUD 的暴力洗除函數
+    // ==========================================
+    private void ClearRoundStartHud()
+    {
+        _bShowingRoundStartHud = false;
+
+        // 1. 發送空白標籤，覆蓋客戶端畫面上的文字
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (IsPlayerValid(p))
+            {
+                p.PrintToCenterHtml("<font></font>");
+            }
+        }
+
+        // 2. 引爆黑魔法：強制客戶端同步 GameRules 狀態，瞬間斬斷殘影
+        if (_gameRulesProxy != null && _gameRulesProxy.IsValid)
+        {
+            Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
         }
     }
 
@@ -107,9 +130,8 @@ public partial class LiteMatchManager
         }
 
         // ==========================================
-        // 3. 【黑魔法實裝】強制刷新客戶端 UI 狀態
+        // 3. 常規狀態刷新防護 (安全網)
         // ==========================================
-        // 降頻處理，避免每 Tick 執行底層判斷造成效能浪費
         _runThisTick = !_runThisTick;
         if (!_runThisTick) return;
 
@@ -125,8 +147,6 @@ public partial class LiteMatchManager
             if (_gameRules.GameRestart != expectedState)
             {
                 _gameRules.GameRestart = expectedState;
-                // 🔮 關鍵黑魔法：強制伺服器同步 GameRules 狀態給所有客戶端
-                // 瞬間清除畫面上因 PrintToCenterHtml 卡住的 HUD 殘影
                 Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
             }
         }
