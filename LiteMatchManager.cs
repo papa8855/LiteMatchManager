@@ -9,7 +9,7 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
-// 【保留】已徹底移除 using System.Linq; 實現 0 垃圾編譯
+// 【修改處】已徹底移除 using System.Linq; 實現 0 垃圾編譯
 
 namespace LiteMatchManager;
 
@@ -39,56 +39,57 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
-    [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
-    [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
-
     [JsonPropertyName("HudHtml_Prep1v1_Line1")] 
-    public string HudHtml_Prep1v1_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>1 v 1</font> 單 挑 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    public string HudHtml_Prep1v1_Line1 { get; set; } = "<font class='fontSize-l' color='white'>✦ 觸 發 1 v 1 單 挑 ✦</font>";
     
     [JsonPropertyName("HudHtml_Prep1v1_Line2")] 
-    public string HudHtml_Prep1v1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / 2</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    public string HudHtml_Prep1v1_Line2 { get; set; } = "<font class='fontSize-l' color='gray'>進度： </font><font class='fontSize-l' color='lime'>{0} / 2</font><font class='fontSize-l' color='gray'> ( 尚缺 {1} 人 )</font>";
     
     [JsonPropertyName("HudHtml_Prep2v2_Line1")] 
-    public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>2 v 2</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='white'>✦ 觸 發 2 v 2 團 戰 ✦</font>";
     
     [JsonPropertyName("HudHtml_Prep2v2_Line2")] 
-    public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='gray'>進度： </font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='gray'> ( 尚缺 {1} 人 )</font>";
 
     [JsonPropertyName("HudHtml_Prep3v3_Line1")] 
-    public string HudHtml_Prep3v3_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發<font class='fontSize-l' color='gold'>3 v 3</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    public string HudHtml_Prep3v3_Line1 { get; set; } = "<font class='fontSize-l' color='white'>✦ 觸 發 3 v 3 大 亂 鬥 ✦</font>";
     
     [JsonPropertyName("HudHtml_Prep3v3_Line2")] 
-    public string HudHtml_Prep3v3_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    public string HudHtml_Prep3v3_Line2 { get; set; } = "<font class='fontSize-l' color='gray'>進度： </font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='gray'> ( 尚缺 {1} 人 )</font>";
     
     [JsonPropertyName("HudHtml_MatchAbort_Line1")] 
-    public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 逃 跑 ， 戰 鬥 已 終 止</font></b><br>";
+    public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='red'>[ 警 告 ] 玩 家 逃 跑 ， 戰 鬥 終 止</font>";
 
     [JsonPropertyName("HudHtml_MatchAbort_Line2")] 
-    public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
+    public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='white'>已 退 回 暖 身 模 式</font>";
 
     [JsonPropertyName("HudHtml_Round1_Line1")] 
-    public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ 狙 擊 戰 鬥 開 始 ★</font></b><br>";
+    public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'>✦ 戰 鬥 開 始 ✦</font>";
 
     [JsonPropertyName("HudHtml_Round1_Line2")] 
-    public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
+    public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'>率 先 取 得 </font><font class='fontSize-xxl' color='lime'><b>２０</b></font><font class='fontSize-xxl' color='white'> 勝 者 為 贏 家</font>";
+
+    // === 【新增】第二種 HUD 的設定檔 ===
+    [JsonPropertyName("RoundStartHudDuration")] 
+    public float RoundStartHudDuration { get; set; } = 2.0f;
 
     [JsonPropertyName("HudHtml_RoundStart_Title")]
-    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font></font><br>";
+    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}:</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>２０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_TScore")]
     public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_CTScore")]
-    public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
+    public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>２０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
-public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
+// 加上 partial 關鍵字，讓它可以跟檔案二溝通
+public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
     public override string ModuleVersion => "8.53_UltimateFix";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純 8.53 版 + SLAYER回合動態計分板 (支援完整JSON)";
+    public override string ModuleDescription => "純 8.53 版 + 20勝免死金牌 (完美防卡圖) + 轉發聊天 + 獨立雙重HUD";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
@@ -111,29 +112,24 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
-    // SLAYER 技術所需的變數
-    private bool _showingRoundStartHud = false;
-    private bool _runThisTick = false;
-    private CCSGameRulesProxy? _gameRulesProxy;
-    
-    // 【新增】快取每回合組合好的分數 HUD 字串
-    private string _currentRoundStartHudText = "";
+    private CCSGameRules? _gameRules;
+    private bool _gameRulesInitialized;
 
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    private CCSGameRulesProxy? GetGameRulesProxy()
+    private void InitializeGameRules()
     {
-        if (_gameRulesProxy != null && _gameRulesProxy.IsValid) return _gameRulesProxy;
-
-        foreach (var entity in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+        if (_gameRulesInitialized) return;
+        
+        // 【完全保留】您原本的寫法
+        foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
-            _gameRulesProxy = entity;
-            return _gameRulesProxy;
+            _gameRules = proxy.GameRules;
+            break;
         }
-
-        _gameRulesProxy = null;
-        return null;
+        
+        _gameRulesInitialized = _gameRules != null;
     }
 
     private void ShowHud(string html)
@@ -146,36 +142,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void OnTick()
     {
-        // 1. SLAYER 機制：在回合開始時持續發送動態組合好的 HUD
-        if (_showingRoundStartHud && _isMatchLive && !string.IsNullOrEmpty(_currentRoundStartHudText))
-        {
-            foreach (var p in Utilities.GetPlayers())
-            {
-                if (p != null && p.IsValid && !p.IsBot) p.PrintToCenterHtml(_currentRoundStartHudText);
-            }
-        }
+        // 呼叫檔案二：渲染 20 勝計分板 (完全獨立，不影響下方邏輯)
+        HUD_OnTick();
 
-        // 2. SLAYER 機制：同步 GameRestart 狀態給客戶端
-        _runThisTick = !_runThisTick;
-        if (_runThisTick)
-        {
-            var proxy = GetGameRulesProxy();
-            if (proxy != null && proxy.IsValid)
-            {
-                var gameRules = proxy.GameRules;
-                if (gameRules != null && !gameRules.WarmupPeriod)
-                {
-                    float currentTime = Server.CurrentTime;
-                    float restartTime = gameRules.RestartRoundTime;
-                    bool expectedState = restartTime < currentTime;
+        if (!_gameRulesInitialized) InitializeGameRules();
 
-                    if (gameRules.GameRestart != expectedState)
-                    {
-                        gameRules.GameRestart = expectedState;
-                        Utilities.SetStateChanged(proxy, "CCSGameRulesProxy", "m_pGameRules");
-                    }
-                }
-            }
+        if (_gameRules != null)
+        {
+            _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
         }
 
         if (_pendingInitialReminders.Count > 0)
@@ -236,7 +210,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager 啟動 (已套用 JSON 設定)");
+        Console.WriteLine("  LiteMatchManager v8.53 (究極防卡圖 20勝版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -250,12 +224,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         });
         
         RegisterListener<Listeners.OnTick>(OnTick);
-        RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
-
+        
         RegisterEventHandler<EventMapShutdown>((@event, info) => {
             _isServerShuttingDown = true;
             return HookResult.Continue;
         });
+
+        // 呼叫檔案二：註冊回合開始事件來顯示計分板
+        RegisterEventHandler<EventRoundStart>(HUD_OnEventRoundStart);
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
@@ -363,10 +339,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         RegisterListener<Listeners.OnMapStart>(mapName => 
         {
             _isServerShuttingDown = false;
-            _gameRulesProxy = null;
-            _showingRoundStartHud = false;
+            _gameRules = null;
+            _gameRulesInitialized = false;
+            
             _cachedTeamT = null;
             _cachedTeamCT = null;
+
+            HUD_OnMapStart(); // 通知檔案二重置
 
             ResetMatchState();
             Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
@@ -374,45 +353,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 Server.ExecuteCommand($"exec {Config.WarmupConfigName}");
             });
         });
-    }
 
-    // 【修改處】在此動態抓取分數，並替換到你的 JSON 設定裡
-    private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
-    {
-        if (_isMatchLive)
+        if (hotReload)
         {
-            // 更新計分板實體
-            if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
-            {
-                foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-                {
-                    if (team.TeamNum == 2) _cachedTeamT = team;
-                    if (team.TeamNum == 3) _cachedTeamCT = team;
-                }
-            }
-
-            int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
-            int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
-
-            string modeText = _liveMatchTargetPlayers == 2 ? "1 v 1 單 挑" : $"{_liveMatchTargetPlayers / 2} v {_liveMatchTargetPlayers / 2} 團 戰";
-
-            // 對應 JSON 的 {0} 和 {1}
-            string titleLine = string.Format(Config.HudHtml_RoundStart_Title, "對 戰 資 訊", modeText);
-            string tScoreLine = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
-            string ctScoreLine = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
-
-            // 組合出完整 HUD
-            _currentRoundStartHudText = $"{titleLine}{tScoreLine}{ctScoreLine}";
-
-            _showingRoundStartHud = true;
-            
-            // 【關鍵修改】不再寫死 2 秒，精準讀取你 JSON 中的 RoundStartHudDuration！
-            AddTimer(Config.RoundStartHudDuration, () => 
-            {
-                _showingRoundStartHud = false;
-            });
+            InitializeGameRules();
         }
-        return HookResult.Continue;
     }
 
     private int GetDynamicRequiredPlayers()
@@ -456,7 +401,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                 if (_cachedTeamT != null && _cachedTeamCT != null)
                 {
-                    // 這裡先保留原本的防卡圖判定邏輯 (以防萬一還是保留了 20，若你要改 30 可直接在這裡改)
                     if (_cachedTeamCT.Score >= 20 || _cachedTeamT.Score >= 20) return; 
                 }
 
@@ -481,6 +425,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         _liveTimer?.Kill();
         _liveTimer = null;
+
+        HUD_Clear(); // 呼叫檔案二：有人逃跑時，強制洗掉計分板
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
 
@@ -563,7 +509,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             char c = rawArg[i];
             if (c == '"' || c == ' ') continue; 
-            if (c == '!' || c == '/') { isCommand = true; break; } 
+            if (c == '!' || c == '/') { isCommand = true; break; } // 加入了 '/' 以相容指令判斷
             break; 
         }
 
@@ -771,7 +717,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             ShowHud(hudStartText);
 
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}２０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
             
             _privateCheckTimer?.Kill();
             _privateCheckTimer = null;
