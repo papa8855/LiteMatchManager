@@ -83,7 +83,7 @@ public partial class LiteMatchManager
             if (IsPlayerValidHUD(player) && (player.TeamNum == 2 || player.TeamNum == 3))
             {
                 // 【終極殺招】用 HTML 頻道傳送空字串與 0 秒持續時間，強行突破 5 秒限制瞬間關閉
-                player.PrintToCenterHtml("", 0); 
+                player.PrintToCenterHtml("", 0.1f);
             }
         }
     }
