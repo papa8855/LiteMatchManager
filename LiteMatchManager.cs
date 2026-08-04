@@ -9,7 +9,7 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
-// 已徹底移除 using System.Linq; 實現 0 垃圾編譯
+// 【修改處】已徹底移除 using System.Linq; 實現 0 垃圾編譯
 
 namespace LiteMatchManager;
 
@@ -69,7 +69,7 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line2")] 
     public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'>率 先 取 得 </font><font class='fontSize-xxl' color='lime'><b>２０</b></font><font class='fontSize-xxl' color='white'> 勝 者 為 贏 家</font>";
 
-    // === 新增：第二種 HUD (30勝計分板) 的設定 ===
+    // === 新增：第二個 HUD (30勝計分板) 的獨立設定檔 ===
     [JsonPropertyName("RoundStartHudDuration")] 
     public float RoundStartHudDuration { get; set; } = 2.0f;
 
@@ -86,9 +86,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.55_SingleFileFix";
+    public override string ModuleVersion => "8.53_UltimateFix_SingleFile";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純 8.53 版 + 20勝免死金牌 (完美防卡圖) + 轉發聊天 + 單檔整合計分板";
+    public override string ModuleDescription => "純 8.53 版 + 20勝免死金牌 (完美防卡圖) + 轉發聊天 + ServerGraphic雙獨立HUD";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
@@ -114,27 +114,30 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private CCSGameRules? _gameRules;
     private bool _gameRulesInitialized;
 
+    // 【修改處】新增計分板快取變數
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    // === 新增：黑魔法與第二種 HUD 專用變數 ===
-    private CCSGameRulesProxy? _gameRulesProxy = null;
+    // === 新增：ServerGraphic 風格的第二個 HUD 變數 ===
     private bool _bShowingRoundStartHud = false;
+    private CCSGameRulesProxy? _hudGameRulesProxy = null;
+    private bool _runThisTick = false;
 
     private void InitializeGameRules()
     {
         if (_gameRulesInitialized) return;
         
+        // 【修改處】拔除 LINQ 的 .FirstOrDefault()，改用迴圈找一次就停
         foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
             _gameRules = proxy.GameRules;
-            _gameRulesProxy = proxy; // 抓取 Proxy 供黑魔法使用
             break;
         }
         
         _gameRulesInitialized = _gameRules != null;
     }
 
+    // === 這是您原本的第一個 HUD (完全不動) ===
     private void ShowHud(string html)
     {
         foreach (var p in Utilities.GetPlayers())
@@ -143,11 +146,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // === 這是您原本的 OnTick (完全保留不動) ===
     private void OnTick()
     {
-        // === 插入：渲染第二種 HUD (不會干擾下方邏輯) ===
-        UpdateRoundStartHud();
-
         if (!_gameRulesInitialized) InitializeGameRules();
 
         if (_gameRules != null)
@@ -213,7 +214,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v8.55 (單檔究極整合版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v8.53 (究極防卡圖 20勝版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -226,15 +227,17 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Handled;
         });
         
+        // 註冊原本的 OnTick
         RegisterListener<Listeners.OnTick>(OnTick);
+        
+        // === 註冊：第二個 HUD 專屬獨立的 OnTick 與 回合事件 (嚴格參照 ServerGraphic) ===
+        RegisterListener<Listeners.OnTick>(ServerGraphic_OnTick);
+        RegisterEventHandler<EventRoundStart>(OnEventRoundStartHUD);
         
         RegisterEventHandler<EventMapShutdown>((@event, info) => {
             _isServerShuttingDown = true;
             return HookResult.Continue;
         });
-
-        // === 插入：回合開始時，啟動第二種 HUD 計時器 ===
-        RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
@@ -287,7 +290,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         _readyPlayers.Remove(steamId);
                         if (!_isMatchLive)
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 取 準 備");
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
                         else
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 退 出 了 戰 鬥，移 至 觀 戰 ");
                     }
@@ -343,12 +346,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             _isServerShuttingDown = false;
             _gameRules = null;
-            _gameRulesProxy = null;
             _gameRulesInitialized = false;
             
+            // 【修改處】手動管理記憶體生命週期，確保不會抓到上一張地圖的垃圾
             _cachedTeamT = null;
             _cachedTeamCT = null;
-            _bShowingRoundStartHud = false; // 清除 HUD 狀態
+
+            // === 每次重載地圖重置 ServerGraphic 的變數 ===
+            _bShowingRoundStartHud = false;
+            _hudGameRulesProxy = null;
 
             ResetMatchState();
             Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
@@ -393,6 +399,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (!_isMatchLive || _isChangingMap) return; 
             try 
             {
+                // 【修改處】實體快取機制，大幅降低伺服器 CPU 負擔與取消 LINQ
                 if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
                 {
                     foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
@@ -429,8 +436,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveTimer?.Kill();
         _liveTimer = null;
 
-        // === 插入：有人跳game終止對戰時，把計分板清除 ===
-        ClearRoundStartHud();
+        // 如果有人逃跑，終止第二個 HUD
+        _bShowingRoundStartHud = false;
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
 
@@ -513,12 +520,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             char c = rawArg[i];
             if (c == '"' || c == ' ') continue; 
-            if (c == '!' || c == '/') { isCommand = true; break; } 
+            if (c == '!' || c == '/') { isCommand = true; break; } // 加入了 '/' 以相容指令判斷
             break; 
         }
 
         if (!isCommand) 
         {
+            // === 完美移植：轉發聊天邏輯 ===
             string message = rawArg.Trim('"', ' '); 
             if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
 
@@ -541,6 +549,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
 
             return HookResult.Handled; 
+            // === 轉發聊天邏輯結束 ===
         }
 
         string command = rawArg.Trim('"', ' ').ToLower();
@@ -989,6 +998,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         int scoreT = 0, scoreCT = 0;
 
+        // 【修改處】實體快取機制，應用於回合結束檢查分數，拔除 LINQ
         if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
         {
             foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
@@ -1020,89 +1030,117 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         base.Unload(hotReload);
     }
 
-    // =========================================================
-    //  以下為獨立新增的第二種 HUD (30勝計分板) 與 清除殘影黑魔法
-    // =========================================================
+    // =========================================================================
+    //   【獨立模組】第二個 HUD (30勝計分板)
+    //    完全參照 ServerGraphic 寫法，絕不干涉原本邏輯
+    // =========================================================================
 
-    private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
+    // 參照 ServerGraphic：抓取玩家是否有效[cite: 3]
+    public static bool IsPlayerValidHUD(CCSPlayerController? player)
     {
-        // 只有正式對戰時觸發 30 勝計分板
-        if (!_isMatchLive) return HookResult.Continue;
+        return player != null
+            && player.IsValid
+            && !player.IsBot
+            && player.Pawn != null
+            && player.Pawn.IsValid
+            && player.Connected == PlayerConnectedState.Connected
+            && !player.IsHLTV;
+    }
+
+    // 參照 ServerGraphic：抓取 GameRulesProxy 黑魔法用[cite: 3]
+    private CCSGameRulesProxy? GetGameRulesProxy()
+    {
+        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid)
+        {
+            return _hudGameRulesProxy;
+        }
+
+        foreach (var entity in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+        {
+            _hudGameRulesProxy = entity;
+            return _hudGameRulesProxy;
+        }
+
+        _hudGameRulesProxy = null;
+        return null;
+    }
+
+    // 參照 ServerGraphic：回合開始觸發顯示，時間到關閉[cite: 3]
+    private HookResult OnEventRoundStartHUD(EventRoundStart @event, GameEventInfo info)
+    {
+        if (!_isMatchLive) return HookResult.Continue; // 第一個HUD是暖身用，這個HUD是 Live 才顯示
 
         _bShowingRoundStartHud = true;
-        
-        // Timer 時間到觸發暴力清除
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            ClearRoundStartHud(); 
+            _bShowingRoundStartHud = false;
+            
+            // 加上清空 HTML 保險，搭配下方黑魔法效果最佳
+            foreach (var p in Utilities.GetPlayers())
+            {
+                if (IsPlayerValidHUD(p)) p.PrintToCenterHtml("<font></font>");
+            }
         });
-
+        
         return HookResult.Continue;
     }
 
-    private void UpdateRoundStartHud()
+    // 參照 ServerGraphic：專屬的 OnTick，處理渲染與刷新殘影[cite: 3]
+    private void ServerGraphic_OnTick()
     {
-        // 如果不在計分板顯示時間內，直接略過
-        if (!_bShowingRoundStartHud) return;
-
-        if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
+        if (_bShowingRoundStartHud) 
         {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
+            // 動態抓取目前比分
+            if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
             {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
-
-        int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
-        int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
-        string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
-
-        string line1 = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
-        string line2 = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
-        string line3 = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
-        string fullHudHtml = line1 + line2 + line3;
-
-        foreach (var player in Utilities.GetPlayers())
-        {
-            if (player != null && player.IsValid && !player.IsBot && player.Pawn != null && player.Pawn.IsValid && player.Connected == PlayerConnectedState.Connected && !player.IsHLTV)
-            {
-                player.PrintToCenterHtml(fullHudHtml);
-            }
-        }
-    }
-
-    private void ClearRoundStartHud()
-    {
-        _bShowingRoundStartHud = false;
-
-        // 1. 先用空白標籤覆蓋
-        foreach (var p in Utilities.GetPlayers())
-        {
-            if (p != null && p.IsValid && !p.IsBot && p.Pawn != null && p.Pawn.IsValid && p.Connected == PlayerConnectedState.Connected && !p.IsHLTV)
-            {
-                p.PrintToCenterHtml("<font></font>");
-            }
-        }
-
-        // 2. 引爆黑魔法強制畫面刷新
-        if (_gameRules != null)
-        {
-            // 防呆補抓
-            if (_gameRulesProxy == null || !_gameRulesProxy.IsValid)
-            {
-                foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+                foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
                 {
-                    _gameRulesProxy = proxy;
-                    break;
+                    if (team.TeamNum == 2) _cachedTeamT = team;
+                    if (team.TeamNum == 3) _cachedTeamCT = team;
                 }
             }
 
-            if (_gameRulesProxy != null && _gameRulesProxy.IsValid)
+            int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
+            int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
+            string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
+
+            string line1 = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
+            string line2 = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
+            string line3 = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
+            string fullHudHtml = line1 + line2 + line3;
+
+            foreach (var player in Utilities.GetPlayers())
             {
-                _gameRules.GameRestart = !_gameRules.GameRestart; // 瞬間反轉狀態製造更新訊號
-                Utilities.SetStateChanged(_gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+                if (!IsPlayerValidHUD(player))
+                    continue;
+
+                player.PrintToCenterHtml(fullHudHtml);
             }
+        }
+
+        // === 參照 ServerGraphic 的黑魔法邏輯 (負責洗除殘影)[cite: 3] ===
+        _runThisTick = !_runThisTick;
+
+        if (!_runThisTick) return;
+
+        var proxy = GetGameRulesProxy();
+
+        if (proxy == null || !proxy.IsValid) return;
+
+        var gameRules = proxy.GameRules;
+        if (gameRules == null) return;
+
+        if (gameRules.WarmupPeriod) return;
+
+        float currentTime = Server.CurrentTime;
+        float restartTime = gameRules.RestartRoundTime;
+
+        bool expectedState = restartTime < currentTime;
+
+        if (gameRules.GameRestart != expectedState)
+        {
+            gameRules.GameRestart = expectedState;
+            Utilities.SetStateChanged(proxy, "CCSGameRulesProxy", "m_pGameRules");
         }
     }
 }
