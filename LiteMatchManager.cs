@@ -9,10 +9,22 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
+// 【修正】徹底拔除 using System.Linq; 拒絕任何拖慢效能的擴充方法
 
 namespace LiteMatchManager;
 
 #pragma warning disable CS8618
+
+public class DuelModeConfig
+{
+    [JsonPropertyName("Duel_WinLimit")] public int WinLimit { get; set; } = 5;
+    [JsonPropertyName("Duel_Name")] public string Name { get; set; } = "手槍";
+    [JsonPropertyName("Duel_Health")] public int Health { get; set; } = 100;
+    [JsonPropertyName("Duel_Armor")] public int Armor { get; set; } = 1; 
+    [JsonPropertyName("Duel_PrimaryWeapons")] public List<string> PrimaryWeapons { get; set; } = [];
+    [JsonPropertyName("Duel_SecondaryWeapons")] public List<string> SecondaryWeapons { get; set; } = [];
+    [JsonPropertyName("Duel_Grenades")] public List<string> Grenades { get; set; } = [];
+}
 
 public class LiteMatchConfig : BasePluginConfig
 {
@@ -28,9 +40,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("ChatPrefix")] public string ChatPrefix { get; set; } = "[ {Green}狙 擊 模 式{White} ]";
     [JsonPropertyName("EnableChatWeaponCommands")] public bool EnableChatWeaponCommands { get; set; } = true;
     
-    [JsonPropertyName("SpawnWeapons")] 
-    public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "item_assaultsuit", "weapon_awp"];
-    
     [JsonPropertyName("WarmupConfigName")] public string WarmupConfigName { get; set; } = "warmup.cfg";
     [JsonPropertyName("LiveConfigName")] public string LiveConfigName { get; set; } = "live.cfg";
     [JsonPropertyName("Duel_MapChangeDelay")] public int MapChangeDelay { get; set; } = 5;
@@ -38,69 +47,70 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    // 獨立秒數設定
+    [JsonPropertyName("SpawnWeapons")] 
+    public List<string> SpawnWeapons { get; set; } = ["weapon_knife", "weapon_deagle"]; 
+
+    [JsonPropertyName("Duel_GunMenuCommands")] 
+    public List<string> GunMenuCommands { get; set; } = ["gunxxxxzzz", "gunsxxxxzzz", "weaponxxxxzzz", "weaponsxxxxzzz", "loadoutxxxxzzz"];
+    
+    [JsonPropertyName("Duel_ReadyCommands")] 
+    public List<string> ReadyCommands { get; set; } = ["r", "ready", "start", "join", "duel"];
+
+    [JsonPropertyName("Duel_WeaponCommands")] 
+    public Dictionary<string, string> WeaponCommands { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        {"ak", "weapon_ak47"}, {"a4", "weapon_m4a1"}, {"gr", "weapon_galilar"},
+        {"a1", "weapon_m4a1_silencer"}, {"awp", "weapon_awp"}, {"ssg", "weapon_ssg08"},
+        {"dg", "weapon_deagle"}, {"usp", "weapon_usp_silencer"}, {"gk", "weapon_glock"},
+        {"r8", "weapon_revolver"}, {"flashxxxxzzz", "weapon_flashbang"}, {"smokexxxxzzz", "weapon_smokegrenade"}, {"hexxxxzzz", "weapon_hegrenade"}
+    };
+
+    [JsonPropertyName("Duel_List")] 
+    public List<DuelModeConfig> MatchModes { get; set; } = [
+        new DuelModeConfig { Name = "手槍", WinLimit = 5, Armor = 1, SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
+        new DuelModeConfig { Name = "狙擊", WinLimit = 7, Armor = 2, PrimaryWeapons = ["weapon_awp", "weapon_ssg08"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
+        new DuelModeConfig { Name = "步槍", WinLimit = 47, Armor = 2, PrimaryWeapons = ["weapon_ak47", "weapon_m4a1", "weapon_galilar", "weapon_m4a1_silencer"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] }
+    ];
+
     [JsonPropertyName("HudDuration_Prep")] public float HudDuration_Prep { get; set; } = 5.0f; 
     [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
     [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
     [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
     [JsonPropertyName("Live_Execute_Delay")] public float Live_Execute_Delay { get; set; } = 4.0f;
 
-    // HTML HUD 文本設定 (已完整解碼為中文與 HTML)
-    [JsonPropertyName("HudHtml_Prep1v1_Line1")] 
-    public string HudHtml_Prep1v1_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>1 v 1</font> 單 挑 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    [JsonPropertyName("HudHtml_Prep1v1_Line1")] public string HudHtml_Prep1v1_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>1 v 1</font> 單 挑 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    [JsonPropertyName("HudHtml_Prep1v1_Line2")] public string HudHtml_Prep1v1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / 2</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    [JsonPropertyName("HudHtml_Prep2v2_Line1")] public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>2 v 2</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    [JsonPropertyName("HudHtml_Prep2v2_Line2")] public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    [JsonPropertyName("HudHtml_Prep3v3_Line1")] public string HudHtml_Prep3v3_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發<font class='fontSize-l' color='gold'>3 v 3</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
+    [JsonPropertyName("HudHtml_Prep3v3_Line2")] public string HudHtml_Prep3v3_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
+    [JsonPropertyName("HudHtml_MatchAbort_Line1")] public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 逃 跑 ， 戰 鬥 已 終 止</font></b><br>";
+    [JsonPropertyName("HudHtml_MatchAbort_Line2")] public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
     
-    [JsonPropertyName("HudHtml_Prep1v1_Line2")] 
-    public string HudHtml_Prep1v1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / 2</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
-    
-    [JsonPropertyName("HudHtml_Prep2v2_Line1")] 
-    public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>2 v 2</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
-    
-    [JsonPropertyName("HudHtml_Prep2v2_Line2")] 
-    public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
-
-    [JsonPropertyName("HudHtml_Prep3v3_Line1")] 
-    public string HudHtml_Prep3v3_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發<font class='fontSize-l' color='gold'>3 v 3</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
-    
-    [JsonPropertyName("HudHtml_Prep3v3_Line2")] 
-    public string HudHtml_Prep3v3_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
-    
-    [JsonPropertyName("HudHtml_MatchAbort_Line1")] 
-    public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 逃 跑 ， 戰 鬥 已 終 止</font></b><br>";
-
-    [JsonPropertyName("HudHtml_MatchAbort_Line2")] 
-    public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
-
-    [JsonPropertyName("HudHtml_Round1_Line1")] 
-    public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ 狙 擊 戰 鬥 開 始 ★</font></b><br>";
-
-    [JsonPropertyName("HudHtml_Round1_Line2")] 
-    public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
-
-    [JsonPropertyName("HudHtml_RoundStart_Title")]
-    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
-
-    [JsonPropertyName("HudHtml_RoundStart_TScore")]
-    public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
-
-    [JsonPropertyName("HudHtml_RoundStart_CTScore")]
-    public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
+    [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ {0} 戰 鬥 開 始 ★</font></b><br>";
+    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>{1}</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
+    [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式 / 搶<font class='fontSize-l' color='Green'><b>{2}</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
+    [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
+    [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>{1}</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.75_JSON_Decoded";
+    public override string ModuleVersion => "9.07_ZeroAlloc_NoLinq";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "完美同步 JSON 設定，涵蓋單一防殘影 HUD 系統與計分板功能";
+    public override string ModuleDescription => "零分配效能版：無縫安靜切換 + 嚴格防呆與動態 HUD";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
+    private int _currentPhaseIndex = 0; 
     
     private HashSet<ulong> _readyPlayers = new(64);
     private Dictionary<ulong, int> _playerUnreadyTime = new(64); 
     private List<string> _unreadyNamesCache = new(64); 
     private Dictionary<ulong, string> _playerPrimary = new(64);
+    private Dictionary<ulong, string> _playerSecondary = new(64);
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
 
@@ -120,24 +130,30 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    // HUD 專用動態變數
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
+
+    // 【全新極致效能函數】取代 LINQ 的 Contains，做到真正的 0 Bytes 記憶體分配
+    private bool IsStringInList(List<string> list, string target)
+    {
+        foreach (var item in list)
+        {
+            if (string.Equals(item, target, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
 
     private void InitializeGameRules()
     {
         if (_gameRulesInitialized) return;
-        
         foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
         {
-            _gameRules = proxy.GameRules;
-            break;
+            _gameRules = proxy.GameRules; break;
         }
-        
         _gameRulesInitialized = _gameRules is not null;
     }
 
-    // 統一由這裡控制 HUD 並發送秒數
     private void ShowHud(string html, float duration)
     {
         _activeCenterMessage = html;
@@ -170,7 +186,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
 
-        // 凍結 UI 避免 HTML 5秒殘留
         if (_gameRules is not null)
         {
             if (shouldFreezeUI) _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
@@ -198,7 +213,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             {
                                 _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                                 int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
-                                
                                 p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
                                 break;
                             }
@@ -207,15 +221,16 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 }
             }
 
-            if (toRemove is not null)
-            {
-                foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
-            }
+            if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
         }
     }
 
     public void OnConfigParsed(LiteMatchConfig config)
     {
+        var caseInsensitiveDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
+        config.WeaponCommands = caseInsensitiveDict;
+
         Config = config;
         _cachedPrefix = config.ChatPrefix
             .Replace("{White}", ChatColors.White.ToString())
@@ -231,7 +246,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager JSON 繁體中文反解碼版 啟動！");
+        Console.WriteLine("  LiteMatchManager v9.07 (零分配純淨版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -242,28 +257,22 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddCommandListener("drop", (player, info) => HookResult.Handled);
         
         RegisterListener<Listeners.OnTick>(OnTick);
-        RegisterEventHandler<EventMapShutdown>((@event, info) => {
-            _isServerShuttingDown = true;
-            return HookResult.Continue;
-        });
+        RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
             {
-                try 
-                {
-                    ulong steamId = player.SteamID;
-                    _readyPlayers.Remove(steamId);
-                    _playerUnreadyTime.Remove(steamId);
-                    _playerPrimary.Remove(steamId);
-                    _pendingInitialReminders.Remove(steamId);
-                    _hasReceivedInitialReminder.Remove(steamId);
+                ulong steamId = player.SteamID;
+                _readyPlayers.Remove(steamId);
+                _playerUnreadyTime.Remove(steamId);
+                _playerPrimary.Remove(steamId);
+                _playerSecondary.Remove(steamId);
+                _pendingInitialReminders.Remove(steamId);
+                _hasReceivedInitialReminder.Remove(steamId);
 
-                    if (_isMatchLive) CheckAndResetGameImmediate();
-                    else Server.NextFrame(CheckMatchStart);
-                } 
-                catch (Exception) { }
+                if (_isMatchLive) Server.NextFrame(CheckPhaseWin);
+                else Server.NextFrame(CheckMatchStart);
             }
             return HookResult.Continue;
         });
@@ -282,18 +291,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                     if (_readyPlayers.Remove(steamId))
                     {
-                        if (!_isMatchLive)
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
-                        else
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 退 出 了 戰 鬥，移 至 觀 戰 ");
+                        if (!_isMatchLive) Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
+                        else Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 退 出 了 戰 鬥，移 至 觀 戰 ");
                     }
                     _playerUnreadyTime.Remove(steamId); 
                 }
 
-                if (!_isMatchLive)
-                {
-                    Server.NextFrame(CheckMatchStart);
-                }
+                if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
                 else if (newTeam is 2 or 3)
                 {
                     if (!_readyPlayers.Contains(steamId))
@@ -311,42 +315,37 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             Server.NextFrame(() => {
                                 if (player.IsValid) {
                                     player.ChangeTeam(CsTeam.Spectator);
-                                    string modeText = _liveMatchTargetPlayers == 2 ? "單 挑" : "團 戰";
-                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}{modeText} 比 賽 已 開 始，無 法 中 途 加 入");
+                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}比 賽 已 開 始，無 法 中 途 加 入");
                                 }
                             });
                         }
-                        else
-                        {
-                            _readyPlayers.Add(steamId);
-                        }
+                        else _readyPlayers.Add(steamId);
                     }
-                    CheckAndResetGameImmediate();
+                    Server.NextFrame(CheckPhaseWin);
                 }
             }
             return HookResult.Continue;
         }, HookMode.Post);
 
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
-        RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
-        
-        // 註冊回合開始事件 (計分板)
         RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
+        
+        RegisterEventHandler<EventRoundEnd>((@event, info) => {
+            if (_isMatchLive) Server.NextFrame(CheckPhaseWin);
+            return HookResult.Continue;
+        });
 
         RegisterListener<Listeners.OnMapStart>(mapName => 
         {
             _isServerShuttingDown = false;
             _gameRules = null;
             _gameRulesInitialized = false;
-            
             _cachedTeamT = null;
             _cachedTeamCT = null;
 
             ResetMatchState();
-            Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
-            Server.NextFrame(() => {
-                Server.ExecuteCommand($"exec {Config.WarmupConfigName}");
-            });
+            Console.WriteLine($"[LiteMatch] 地圖載入完成！執行暖身：{Config.WarmupConfigName}");
+            Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
         });
 
         if (hotReload) InitializeGameRules();
@@ -371,48 +370,55 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return target > absoluteMax ? absoluteMax : target;
     }
 
-    private void CheckAndResetGameImmediate()
+    private void CheckPhaseWin()
     {
-        Server.NextFrame(() => {
-            if (_isServerShuttingDown || !_isMatchLive || _isChangingMap) return; 
-            try 
+        if (_isServerShuttingDown || !_isMatchLive || _isChangingMap) return; 
+        
+        int activeT = 0, activeCT = 0;
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p is { IsValid: true, Handle: not 0, IsBot: false })
             {
-                if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
-                {
-                    foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-                    {
-                        if (team.TeamNum == 2) _cachedTeamT = team;
-                        else if (team.TeamNum == 3) _cachedTeamCT = team;
-                    }
-                }
+                if (p.TeamNum == 2) activeT++;
+                else if (p.TeamNum == 3) activeCT++;
+            }
+        }
+        if (activeT == 0 || activeCT == 0) { AbortMatch(); return; }
 
-                if (_cachedTeamT is { Score: >= 30 } || _cachedTeamCT is { Score: >= 30 }) return;
+        if (Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return;
 
-                int activeT = 0, activeCT = 0;
-                foreach (var p in Utilities.GetPlayers())
-                {
-                    if (p is { IsValid: true, Handle: not 0, IsBot: false })
-                    {
-                        if (p.TeamNum == 2) activeT++;
-                        else if (p.TeamNum == 3) activeCT++;
-                    }
-                }
-                if (activeT == 0 || activeCT == 0) AbortMatch();
-            } 
-            catch (Exception) { }
-        });
+        if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
+        {
+            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
+            {
+                if (team.TeamNum == 2) _cachedTeamT = team;
+                else if (team.TeamNum == 3) _cachedTeamCT = team;
+            }
+        }
+
+        int scoreT = _cachedTeamT?.Score ?? 0;
+        int scoreCT = _cachedTeamCT?.Score ?? 0;
+        var currentPhase = Config.MatchModes[_currentPhaseIndex];
+
+        if (scoreT >= currentPhase.WinLimit || scoreCT >= currentPhase.WinLimit)
+        {
+            _currentPhaseIndex++; 
+            
+            if (_currentPhaseIndex >= Config.MatchModes.Count)
+            {
+                TriggerMatchEnd(scoreT, scoreCT);
+            }
+        }
     }
 
     private void AbortMatch()
     {
         if (!_isMatchLive) return;
         
-        _liveTimer?.Kill();
-        _liveTimer = null;
-
+        _liveTimer?.Kill(); _liveTimer = null;
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 重 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
         Server.ExecuteCommand("mp_warmup_start");
         
         var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
@@ -420,8 +426,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         else Server.ExecuteCommand("mp_warmup_pausetimer 1");
         
         ResetMatchState();
-        Console.WriteLine($"[LiteMatch] [AbortMatch] 對戰已終止！正在切換回暖身設定檔：{Config.WarmupConfigName}");
-        Server.NextFrame(() => { Server.ExecuteCommand($"exec {Config.WarmupConfigName}"); });
+        Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
     }
 
     private HookResult OnJoinTeam(CCSPlayerController? player, CommandInfo info)
@@ -446,9 +451,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     foreach (var p in Utilities.GetPlayers())
                     {
                         if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: var team } && team == teamIndex && p.SteamID != player.SteamID)
-                        {
                             currentTeamCount++;
-                        }
                     }
                     
                     if (currentTeamCount >= liveTeamMax)
@@ -465,9 +468,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 foreach (var p in Utilities.GetPlayers())
                 {
                     if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: var team } && team == teamIndex && p.SteamID != player.SteamID)
-                    {
                         currentTeamCount++;
-                    }
                 }
                 if (currentTeamCount >= Config.MaxPlayersPerTeam)
                 {
@@ -484,7 +485,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         if (player is not { IsValid: true }) return HookResult.Continue;
         string rawArg = info.GetArg(1);
-        if (string.IsNullOrEmpty(rawArg)) return HookResult.Continue;
+        if (string.IsNullOrWhiteSpace(rawArg)) return HookResult.Continue;
 
         bool isCommand = false;
         for (int i = 0; i < rawArg.Length; i++)
@@ -499,56 +500,77 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             string message = rawArg.Trim('"', ' '); 
             if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
-
             string playerName = player.PlayerName;
-            string senderPrefix = $" {ChatColors.White}[所有人]{ChatColors.White}";
-            
-            string nameColor = player.TeamNum switch {
-                1 => $"{ChatColors.Grey}",
-                2 => "\x10",
-                3 => "\x0B",
-                _ => $"{ChatColors.White}"
-            };
+            string nameColor = player.TeamNum switch { 1 => $"{ChatColors.Grey}", 2 => "\x10", 3 => "\x0B", _ => $"{ChatColors.White}" };
+            string formattedMessage = $" {ChatColors.White}[所有人]{ChatColors.White} {nameColor}{playerName}{ChatColors.White}：{message}";
 
-            string formattedMessage = $"{senderPrefix} {nameColor}{playerName}{ChatColors.White}：{message}";
-
-            foreach (var p in Utilities.GetPlayers())
-            {
-                if (p is { IsValid: true, IsBot: false }) p.PrintToChat(formattedMessage);
-            }
-
+            foreach (var p in Utilities.GetPlayers()) if (p is { IsValid: true, IsBot: false }) p.PrintToChat(formattedMessage);
             return HookResult.Handled; 
         }
 
-        string command = rawArg.Trim('"', ' ').ToLower();
+        string command = rawArg.Trim('"', ' ', '!', '/').ToLower();
 
-        if (command == "!nextmap")
+        if (command == "nextmap" && AdminManager.PlayerHasPermissions(player, "@css/root"))
         {
-            if (AdminManager.PlayerHasPermissions(player, "@css/root")) TriggerMapChange(false);
-            else player.PrintToChat($" {_cachedPrefix} {ChatColors.Red}你沒有權限執行此指令。");
-            return HookResult.Handled;
+            TriggerMapChange(); return HookResult.Handled;
         }
 
-        if (command is "!r" or "!ready")
+        // 【修正】使用自己寫的 0 allocation 函數
+        if (IsStringInList(Config.ReadyCommands, command))
         {
             if (!_isMatchLive) HandlePlayerReady(player);
             return HookResult.Continue; 
         }
-        else if (command == "!unready")
+        else if (command == "unready")
         {
             if (!_isMatchLive) HandlePlayerUnready(player);
             return HookResult.Continue; 
         }
 
-        if (Config.EnableChatWeaponCommands && HandleWeaponCommand(player, command)) 
+        if (Config.EnableChatWeaponCommands)
         {
-            return HookResult.Continue; 
+            // 【修正】使用自己寫的 0 allocation 函數
+            if (IsStringInList(Config.GunMenuCommands, command))
+            {
+                OnGsCommand(player); return HookResult.Continue;
+            }
+            if (Config.WeaponCommands.TryGetValue(command, out string? realWeaponName))
+            {
+                TryGiveWeaponByCommand(player, realWeaponName);
+                return HookResult.Continue;
+            }
         }
-        
         return HookResult.Continue;
     }
 
-    private void TriggerMapChange(bool isMatchEnd = false)
+    private void TryGiveWeaponByCommand(CCSPlayerController player, string weaponName)
+    {
+        if (!player.PawnIsAlive) return;
+
+        if (!_isMatchLive || Config.MatchModes.Count == 0)
+        {
+            ReplaceWeapon(player, weaponName);
+            return;
+        }
+
+        var phase = Config.MatchModes[_currentPhaseIndex];
+        
+        // 【修正】使用自己寫的 0 allocation 函數
+        bool isPrimary = IsStringInList(phase.PrimaryWeapons, weaponName);
+        bool isSecondary = IsStringInList(phase.SecondaryWeapons, weaponName);
+
+        if (!isPrimary && !isSecondary)
+        {
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Red}[ 警 告 ] {ChatColors.White}當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器！");
+            return;
+        }
+
+        if (isPrimary) _playerPrimary[player.SteamID] = weaponName;
+        if (isSecondary) _playerSecondary[player.SteamID] = weaponName;
+        ReplaceWeapon(player, weaponName);
+    }
+
+    private void TriggerMapChange()
     {
         if (_isChangingMap || Config.MapList is null || Config.MapList.Count == 0) return;
         _isChangingMap = true;
@@ -559,15 +581,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string mapName = parts[0];
         string workshopId = parts.Length > 1 ? parts[1] : "";
 
-        if (!isMatchEnd)
-        {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}管理員強制換圖：即將切換至 {ChatColors.Lime}{mapName}");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{Config.MapChangeDelay} 秒後 {ChatColors.Gold}自動載入...");
-        }
-        else
-        {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{Config.MapChangeDelay} 秒後 {ChatColors.Gold}自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
-        }
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{Config.MapChangeDelay} 秒後 {ChatColors.Gold}自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
 
         AddTimer(Config.MapChangeDelay, () =>
         {
@@ -576,20 +590,22 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         });
     }
 
+    private void TriggerMatchEnd(int scoreT, int scoreCT)
+    {
+        string winnerName = scoreT > scoreCT ? "恐怖份子 (T)" : "反恐小組 (CT)";
+        string loserName = scoreT > scoreCT ? "反恐小組 (CT)" : "恐怖份子 (T)";
+        int winnerScore = Math.Max(scoreT, scoreCT);
+        int loserScore = Math.Min(scoreT, scoreCT);
+
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({winnerScore} : {loserScore}) {ChatColors.Gold}贏得了最終勝利！");
+        TriggerMapChange();
+    }
+
     private void HandlePlayerReady(CCSPlayerController player)
     {
-        if (player.TeamNum is 0 or 1)
-        {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}您 無 法 從 旁 觀 者 模 式 加 入 對 戰");
-            return;
-        }
-
+        if (player.TeamNum is 0 or 1) { player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}您 無 法 從 旁 觀 者 模 式 加 入 對 戰"); return; }
         ulong steamId = player.SteamID;
-        if (!_readyPlayers.Add(steamId)) 
-        {
-            player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！");
-            return;
-        }
+        if (!_readyPlayers.Add(steamId)) { player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); return; }
 
         _playerUnreadyTime.Remove(steamId); 
         _pendingInitialReminders.Remove(steamId); 
@@ -611,11 +627,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!_isMatchLive)
         {
             int activePlayers = 0;
-            foreach (var p in Utilities.GetPlayers())
-            {
-                if (p is { IsValid: true, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 }) activePlayers++;
-            }
-
+            foreach (var p in Utilities.GetPlayers()) if (p is { IsValid: true, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 }) activePlayers++;
             if (activePlayers > 0 && activePlayers == _readyPlayers.Count)
             {
                 BroadcastWaitingMessage();
@@ -631,7 +643,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_readyPlayers.Remove(steamId)) 
         {
             _playerUnreadyTime[steamId] = 0; 
-            
             int targetPlayers = GetDynamicRequiredPlayers();
             int missingPlayers = targetPlayers - _readyPlayers.Count;
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
@@ -642,7 +653,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 <= 4 => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>",
                 _ => $"{Config.HudHtml_Prep3v3_Line1}<br>{string.Format(Config.HudHtml_Prep3v3_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
             };
-
             ShowHud(prepString, Config.HudDuration_Prep);
         }
     }
@@ -667,20 +677,23 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_readyPlayers.Count >= totalPlayers)
         {
             _isMatchLive = true;
+            _currentPhaseIndex = 0; 
             _liveMatchTargetPlayers = totalPlayers; 
             
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
-            string hudStartText = $"{Config.HudHtml_Round1_Line1}<br>{Config.HudHtml_Round1_Line2}<br>";
-            
+            string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
+            string winLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].WinLimit.ToString() : "20";
+
+            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, phaseName)}<br>{string.Format(Config.HudHtml_Round1_Line2, winLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
+            
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}３０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}第一階段：{ChatColors.Gold}【{phaseName}】{ChatColors.Orange} 搶 {ChatColors.Green}{winLimit}{ChatColors.Orange} 勝！");
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
             
-            Console.WriteLine($"[LiteMatch] [MatchLive] 雙方準備就緒 ({modeText})！將於 {Config.Live_Execute_Delay} 秒後執行開賽設定檔：{Config.LiveConfigName}");
             _liveTimer?.Kill();
             _liveTimer = AddTimer(Config.Live_Execute_Delay, () => 
             {
@@ -699,9 +712,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!_isMatchLive && player.TeamNum is 2 or 3)
         {
             if (!_readyPlayers.Contains(steamId) && _hasReceivedInitialReminder.Add(steamId))
-            {
                 _pendingInitialReminders[steamId] = Server.CurrentTime + 5.0f;
-            }
         }
 
         if (_isMatchLive && player.TeamNum is 2 or 3)
@@ -720,38 +731,51 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         Server.NextFrame(() => {
             Server.NextFrame(() => {
-                if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true }) return;
+                if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
                 
                 player.RemoveWeapons(); 
                 
-                foreach (var item in Config.SpawnWeapons) 
-                { 
-                    string weaponToGive = item;
+                if (_isMatchLive && Config.MatchModes.Count > _currentPhaseIndex)
+                {
+                    var phase = Config.MatchModes[_currentPhaseIndex];
+                    
+                    pawn.Health = phase.Health;
+                    if (phase.Armor == 0) { pawn.ArmorValue = 0; pawn.HasHelmet = false; }
+                    else if (phase.Armor == 1) { pawn.ArmorValue = 100; pawn.HasHelmet = false; }
+                    else if (phase.Armor == 2) { pawn.ArmorValue = 100; pawn.HasHelmet = true; }
 
-                    if (item.StartsWith("weapon_") && !item.Contains("knife") && !item.Contains("bayonet"))
-                    {
-                        if (_playerPrimary.TryGetValue(steamId, out string? prefPri)) weaponToGive = prefPri;
+                    player.GiveNamedItem("weapon_knife"); 
+
+                    string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
+                    // 【修正】使用 IsStringInList
+                    if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && IsStringInList(phase.SecondaryWeapons, prefSec))
+                        secToGive = prefSec;
+                    if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
+
+                    string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
+                    // 【修正】使用 IsStringInList
+                    if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && IsStringInList(phase.PrimaryWeapons, prefPri))
+                        priToGive = prefPri;
+                    if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
+
+                    if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
+                }
+                else
+                {
+                    foreach (var item in Config.SpawnWeapons) 
+                    { 
+                        string weaponToGive = item;
+                        if (item.StartsWith("weapon_") && !item.Contains("knife") && !item.Contains("bayonet"))
+                        {
+                            if (_playerPrimary.TryGetValue(steamId, out string? prefPri)) weaponToGive = prefPri;
+                        }
+                        player.GiveNamedItem(weaponToGive); 
                     }
-                    player.GiveNamedItem(weaponToGive); 
                 }
             });
         });
         
         return HookResult.Continue;
-    }
-
-    private bool HandleWeaponCommand(CCSPlayerController player, string command)
-    {
-        if (!player.PawnIsAlive) return false;
-        ulong steamId = player.SteamID;
-        
-        switch (command)
-        {
-            case "!ssg": _playerPrimary[steamId] = "weapon_ssg08"; ReplaceWeapon(player, "weapon_ssg08"); return true;
-            case "!awp": _playerPrimary[steamId] = "weapon_awp"; ReplaceWeapon(player, "weapon_awp"); return true;
-            case "!gs": OnGsCommand(player, null!); return true;
-        }
-        return false;
     }
 
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
@@ -765,24 +789,29 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 string wName = weapon.DesignerName;
                 if (string.IsNullOrEmpty(wName) || wName.Contains("knife") || wName.Contains("bayonet") || wName.Contains("c4")) continue;
 
-                weapon.Remove();
-                Server.NextFrame(() => {
-                    if (player is { IsValid: true, PawnIsAlive: true }) {
-                        player.GiveNamedItem(newWeapon);
-                    }
-                });
-                return; 
+                bool isNewWeaponPistol = newWeapon.Contains("usp") || newWeapon.Contains("glock") || newWeapon.Contains("deagle") || newWeapon.Contains("revolver") || newWeapon.Contains("p250") || newWeapon.Contains("tec9") || newWeapon.Contains("fiveseven") || newWeapon.Contains("cz75a") || newWeapon.Contains("elite") || newWeapon.Contains("hkp2000");
+                bool isCurrentWeaponPistol = wName.Contains("usp") || wName.Contains("glock") || wName.Contains("deagle") || wName.Contains("revolver") || wName.Contains("p250") || wName.Contains("tec9") || wName.Contains("fiveseven") || wName.Contains("cz75a") || wName.Contains("elite") || wName.Contains("hkp2000");
+
+                if (isNewWeaponPistol == isCurrentWeaponPistol)
+                {
+                    weapon.Remove();
+                    Server.NextFrame(() => {
+                        if (player is { IsValid: true, PawnIsAlive: true }) player.GiveNamedItem(newWeapon);
+                    });
+                    return; 
+                }
             }
         }
         player.GiveNamedItem(newWeapon);
     }
 
-    private void OnGsCommand(CCSPlayerController? player, CommandInfo info)
+    private void OnGsCommand(CCSPlayerController player)
     {
-        if (player is not { IsValid: true }) return;
-        player.PrintToChat($" {ChatColors.Orange} 禁 用 所 有 小 槍 、請 在 聊 天 欄 位 輸 入 您 要 的 武 器");
+        player.PrintToChat($" {ChatColors.Orange} 您可以輸入縮寫來快速切換武器 (會自動檢查模式限制)");
         player.PrintToChat($" ---------------------------------------------------------------");
-        player.PrintToChat($" [ {ChatColors.Green}狙擊{ChatColors.White} ] {ChatColors.Green}!SSG {ChatColors.White}[ SSG 08 鳥狙 ] 、{ChatColors.Green}!AWP {ChatColors.White}[ AWP狙擊步槍 ]");
+        player.PrintToChat($" [ {ChatColors.Green}步槍{ChatColors.White} ] !AK 、 !A4 、 !A1 、 !GR");
+        player.PrintToChat($" [ {ChatColors.Green}狙擊{ChatColors.White} ] !AWP 、 !SSG");
+        player.PrintToChat($" [ {ChatColors.Green}手槍{ChatColors.White} ] !DG 、 !USP 、 !GK 、 !R8");
     }
 
     private void CheckAndWarnUnreadyPlayers()
@@ -804,9 +833,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         if (_playerUnreadyTime[steamId] >= Config.KickUnreadyPlayerTime) 
                         {
                             string kickedName = p.PlayerName;
-                            Server.NextFrame(() => {
-                                Server.ExecuteCommand($"kickid {p.UserId} Unready_Timeout");
-                            });
+                            Server.NextFrame(() => Server.ExecuteCommand($"kickid {p.UserId} Unready_Timeout"));
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{kickedName} {ChatColors.White}因 未 準 備 好 而 被 踢 出");
                             _playerUnreadyTime.Remove(steamId);
                         }
@@ -837,7 +864,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string modeHint = totalPlayers == 1 
                 ? $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}1 {ChatColors.White}人，等 待 對 手 加 入..."
                 : $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}{totalPlayers} {ChatColors.White}人，等 對 手 加 入 {ChatColors.Green}{GetDynamicRequiredPlayers() / 2} v {GetDynamicRequiredPlayers() / 2} {ChatColors.White}團 戰";
-
             Server.PrintToChatAll(modeHint);
         }
     }
@@ -873,10 +899,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 };
                 
                 if (_unreadyNamesCache.Count > 0)
-                {
                     Server.PrintToChatAll($" {_cachedPrefix} 尚未準備玩家：{ChatColors.Orange}{string.Join(", ", _unreadyNamesCache)}{ChatColors.Default} | 對戰需滿 {ChatColors.Green}{targetPlayers}{ChatColors.Default} 人");
-                }
-                
                 if (!string.IsNullOrEmpty(modeHint)) Server.PrintToChatAll(modeHint); 
             }
         }
@@ -887,12 +910,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         _isMatchLive = false;
         _isChangingMap = false;
+        _currentPhaseIndex = 0; 
         _liveMatchTargetPlayers = 0; 
         _readyPlayers.Clear();
         _playerUnreadyTime.Clear();
         _pendingInitialReminders.Clear();
         _hasReceivedInitialReminder.Clear();
-
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
 
@@ -909,7 +932,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
-        if (!_isMatchLive) return HookResult.Continue;
+        if (!_isMatchLive || Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return HookResult.Continue;
         
         if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
         {
@@ -922,43 +945,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
-        string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
+        
+        var currentPhase = Config.MatchModes[_currentPhaseIndex];
 
-        string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr) + 
+        string fullHudHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", currentPhase.Name, currentPhase.WinLimit) + 
                              string.Format(Config.HudHtml_RoundStart_TScore, scoreT) + 
-                             string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
+                             string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT, currentPhase.WinLimit);
 
         ShowHud(fullHudHtml, Config.RoundStartHudDuration);
 
-        return HookResult.Continue;
-    }
-
-    private HookResult OnMatchEnd(EventCsWinPanelMatch @event, GameEventInfo info)
-    {
-        if (!_isMatchLive) return HookResult.Continue;
-        
-        if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
-        {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-            {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                else if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
-
-        int scoreT = _cachedTeamT?.Score ?? 0;
-        int scoreCT = _cachedTeamCT?.Score ?? 0;
-
-        string winnerName = scoreT > scoreCT ? "恐怖份子 (T)" : "反恐小組 (CT)";
-        string loserName = scoreT > scoreCT ? "反恐小組 (CT)" : "恐怖份子 (T)";
-        
-        int winnerScore = Math.Max(scoreT, scoreCT);
-        int loserScore = Math.Min(scoreT, scoreCT);
-        string scoreString = $"{winnerScore} : {loserScore}";
-
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({scoreString}) {ChatColors.Gold}的分數贏過 {ChatColors.Lime}{loserName}");
-
-        TriggerMapChange(true);
         return HookResult.Continue;
     }
 
