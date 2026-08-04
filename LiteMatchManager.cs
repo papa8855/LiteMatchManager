@@ -562,7 +562,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (!isPrimary && !isSecondary)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Red}[ 警 告 ] {ChatColors.White}當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器！");
+            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器！");
             return;
         }
 
@@ -812,9 +812,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         player.PrintToChat($" {ChatColors.Orange} 您可以輸入縮寫來快速切換武器 (會自動檢查模式限制)");
         player.PrintToChat($" ---------------------------------------------------------------");
-        player.PrintToChat($" [ {ChatColors.Green}步槍{ChatColors.White} ] !AK 、 !A4 、 !A1 、 !GR");
-        player.PrintToChat($" [ {ChatColors.Green}狙擊{ChatColors.White} ] !AWP 、 !SSG");
-        player.PrintToChat($" [ {ChatColors.Green}手槍{ChatColors.White} ] !DG 、 !USP 、 !GK 、 !R8");
+        player.PrintToChat($" [ {ChatColors.LightBlue}手槍{ChatColors.White} ]  {ChatColors.LightBlue}!dg {ChatColors.White}[ 沙鷹 ] 、{ChatColors.LightBlue}!usp {ChatColors.White}[ USP ] 、{ChatColors.LightBlue}!gk {ChatColors.White}[ 格洛克 ] 、{ChatColors.LightBlue}!r8 {ChatColors.White}[ R8 ]");
+        player.PrintToChat($" [ {ChatColors.Orange}狙擊{ChatColors.White} ] {ChatColors.Orange}!ssg {ChatColors.White}[ SSG 08 鳥狙 ] 、{ChatColors.Orange}!awp {ChatColors.White}[ AWP狙擊步槍 ]");
+        player.PrintToChat($" [ {ChatColors.Green}步槍{ChatColors.White} ] {ChatColors.Green}!gr {ChatColors.White}[ Galil ] 、{ChatColors.Green}!ak {ChatColors.White}[ AK47 ] 、{ChatColors.Green}!a1 {ChatColors.White}[ M4A1 ] 、{ChatColors.Green}!a4 {ChatColors.White}[ M4A4 ]");
     }
 
     private void CheckAndWarnUnreadyPlayers()
