@@ -115,12 +115,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _gameRulesInitialized = _gameRules != null;
     }
 
-    // --- 極致優化版 ShowHud (結合雙字串與黑魔法瞬間洗框) ---
-    private void ShowHud(string html, float duration = 10f)
+   private void ShowHud(string html, float duration = 10f)
     {
-        // 算 1 次雙字串，OnTick 輪流發送，徹底解決無字空框問題且 0 效能負擔
+        // 1. 【防空框優化】尾巴改用 HTML 零寬字元 (&#8203;)，完全不佔空間，完美騙過 UI 引擎
         _hudHtmlA = html;
-        _hudHtmlB = html + "<font></font>"; 
+        _hudHtmlB = html + "&#8203;"; 
         bShowingHud = true;
         
         _hudTimer?.Kill();
@@ -132,16 +131,16 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             { 
                 bShowingHud = false; 
 
-                // 1. 先送空字串，把文字瞬間洗掉
                 foreach (var player in Utilities.GetPlayers())
                 {
                     if (IsPlayerValid(player))
                     {
-                        player.PrintToCenterHtml("<font></font>");
+                        // 2. 【除框優化】發送真正的「空字串」，不帶任何 HTML 標籤，讓黑框瞬間折疊歸零
+                        player.PrintToCenterHtml("");
                     }
                 }
 
-                // 2. 黑魔法：瞬間反轉遊戲規則狀態，強迫 Panorama UI 瞬間把殘留黑框炸掉！
+                // 黑魔法：瞬間反轉遊戲規則狀態，強迫 Panorama UI 刷新，把折疊的殘留徹底洗掉
                 if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
                 {
                     foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
