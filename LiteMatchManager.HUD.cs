@@ -17,6 +17,12 @@ public partial class LiteMatchManager
         _bShowingRoundStartHud = false;
     }
 
+    // 【修復報錯】：提供給主程式 (如 AbortMatch) 呼叫，單純關閉顯示開關
+    private void HUD_Clear()
+    {
+        _bShowingRoundStartHud = false;
+    }
+
     // 給檔案一回合開始時呼叫的計時器
     private HookResult HUD_OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
@@ -27,7 +33,7 @@ public partial class LiteMatchManager
         // 100% SLAYER 原汁原味：時間到只切換布林值，不做任何空字串發送
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            _bShowingRoundStartHud = false;
+            HUD_Clear(); 
         });
 
         return HookResult.Continue;
