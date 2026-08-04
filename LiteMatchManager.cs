@@ -39,7 +39,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    // 【新增】完全對接你 JSON 的秒數設定
     [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
     [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
     [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
@@ -74,17 +73,14 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line2")] 
     public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
-    // 【新增】完全對接你 JSON 的每回合動態計分板
     [JsonPropertyName("HudHtml_RoundStart_Title")]
-    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
+    public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font></font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_TScore")]
     public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
 
     [JsonPropertyName("HudHtml_RoundStart_CTScore")]
     public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
-
-    [JsonPropertyName("ConfigVersion")] public int ConfigVersion { get; set; } = 1;
 }
 
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
