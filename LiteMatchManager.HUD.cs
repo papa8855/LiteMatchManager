@@ -8,6 +8,7 @@ public partial class LiteMatchManager
 {
     private CCSGameRulesProxy? _hudGameRulesProxy = null;
     private bool _bShowingRoundStartHud = false;
+    private bool _runThisTick = false; // SLAYER 專屬：交替 Tick 節流閥
 
     // 給檔案一換地圖時呼叫的重置
     private void HUD_OnMapStart()
@@ -23,42 +24,16 @@ public partial class LiteMatchManager
         
         _bShowingRoundStartHud = true;
         
-        // 精準讀取設定秒數 (預設 2 秒)
+        // 100% SLAYER 原汁原味：時間到只切換布林值，不做任何空字串發送
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            HUD_Clear(); 
+            _bShowingRoundStartHud = false;
         });
 
         return HookResult.Continue;
     }
 
-    // 時間到，暴力清除畫面 (精準瞬間消失，拒絕淡出)
-    private void HUD_Clear()
-    {
-        _bShowingRoundStartHud = false;
-
-        // 1. 發送空字串洗掉文字內容
-        foreach (var p in Utilities.GetPlayers())
-        {
-            if (IsPlayerValidHUD(p))
-            {
-                p.PrintToCenterHtml("<font></font>");
-            }
-        }
-
-        // 2. 黑魔法：瞬間反轉 GameRestart 狀態並同步給客戶端，強行炸掉殘留的黑底框！
-        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid)
-        {
-            var gameRules = _hudGameRulesProxy.GameRules;
-            if (gameRules != null)
-            {
-                gameRules.GameRestart = !gameRules.GameRestart; 
-                Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
-            }
-        }
-    }
-
-    // 每一 Tick 渲染計分板
+    // 每一 Tick 渲染計分板與執行 SLAYER 黑魔法
     private void HUD_OnTick()
     {
         // 抓取黑魔法需要的 Proxy
@@ -71,50 +46,57 @@ public partial class LiteMatchManager
             }
         }
 
-        if (!_bShowingRoundStartHud) return;
-
-        if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
+        // === 1. 顯示邏輯 (對應 SLAYER 的 bShowingServerGraphic 判斷) ===
+        if (_bShowingRoundStartHud)
         {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
+            if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
             {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
-
-        int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
-        int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
-        string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
-
-        string line1 = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
-        string line2 = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
-        string line3 = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
-        string fullHudHtml = line1 + line2 + line3;
-
-        foreach (var player in Utilities.GetPlayers())
-        {
-            if (IsPlayerValidHUD(player))
-            {
-                player.PrintToCenterHtml(fullHudHtml);
-            }
-        }
-
-        // 【確保顯示】在凍結時間內同步狀態，防止計分板被系統卡住出不來
-        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid)
-        {
-            var gameRules = _hudGameRulesProxy.GameRules;
-            if (gameRules != null && !gameRules.WarmupPeriod)
-            {
-                float currentTime = Server.CurrentTime;
-                float restartTime = gameRules.RestartRoundTime;
-                bool expectedState = restartTime < currentTime;
-
-                if (gameRules.GameRestart != expectedState)
+                foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
                 {
-                    gameRules.GameRestart = expectedState;
-                    Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+                    if (team.TeamNum == 2) _cachedTeamT = team;
+                    if (team.TeamNum == 3) _cachedTeamCT = team;
                 }
             }
+
+            int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
+            int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
+            string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
+
+            string line1 = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
+            string line2 = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
+            string line3 = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
+            string fullHudHtml = line1 + line2 + line3;
+
+            foreach (var player in Utilities.GetPlayers())
+            {
+                if (IsPlayerValidHUD(player))
+                {
+                    player.PrintToCenterHtml(fullHudHtml);
+                }
+            }
+        }
+
+        // === 2. SLAYER 核心 GameRestart 同步機制 (必須持續運行以維持客戶端不卡圖) ===
+        _runThisTick = !_runThisTick;
+
+        if (!_runThisTick) return;
+
+        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid) return;
+
+        var gameRules = _hudGameRulesProxy.GameRules;
+        if (gameRules == null) return;
+
+        if (gameRules.WarmupPeriod) return;
+
+        float currentTime = Server.CurrentTime;
+        float restartTime = gameRules.RestartRoundTime;
+
+        bool expectedState = restartTime < currentTime;
+
+        if (gameRules.GameRestart != expectedState)
+        {
+            gameRules.GameRestart = expectedState;
+            Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
         }
     }
 
