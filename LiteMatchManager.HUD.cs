@@ -8,51 +8,35 @@ public partial class LiteMatchManager
 {
     private CCSGameRulesProxy? _hudGameRulesProxy = null;
     private bool _bShowingRoundStartHud = false;
-    private bool _runThisTick = false; // SLAYER 專屬：交替 Tick 節流閥
+    private bool _runThisTick = false;
 
-    // 給檔案一換地圖時呼叫的重置
     private void HUD_OnMapStart()
     {
         _hudGameRulesProxy = null;
         _bShowingRoundStartHud = false;
     }
 
-    // 【修復報錯】：提供給主程式 (如 AbortMatch) 呼叫，單純關閉顯示開關
     private void HUD_Clear()
     {
         _bShowingRoundStartHud = false;
     }
 
-    // 給檔案一回合開始時呼叫的計時器
     private HookResult HUD_OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
         
         _bShowingRoundStartHud = true;
         
-        // 100% SLAYER 原汁原味：時間到只切換布林值，不做任何空字串發送
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            HUD_Clear(); 
+            _bShowingRoundStartHud = false;
         });
 
         return HookResult.Continue;
     }
 
-    // 每一 Tick 渲染計分板與執行 SLAYER 黑魔法
     private void HUD_OnTick()
     {
-        // 抓取黑魔法需要的 Proxy
-        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
-        {
-            foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
-            {
-                _hudGameRulesProxy = proxy;
-                break;
-            }
-        }
-
-        // === 1. 顯示邏輯 (對應 SLAYER 的 bShowingServerGraphic 判斷) ===
         if (_bShowingRoundStartHud)
         {
             if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
@@ -82,17 +66,22 @@ public partial class LiteMatchManager
             }
         }
 
-        // === 2. SLAYER 核心 GameRestart 同步機制 (必須持續運行以維持客戶端不卡圖) ===
         _runThisTick = !_runThisTick;
-
         if (!_runThisTick) return;
+
+        if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
+        {
+            foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+            {
+                _hudGameRulesProxy = proxy;
+                break;
+            }
+        }
 
         if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid) return;
 
         var gameRules = _hudGameRulesProxy.GameRules;
-        if (gameRules == null) return;
-
-        if (gameRules.WarmupPeriod) return;
+        if (gameRules == null || gameRules.WarmupPeriod) return;
 
         float currentTime = Server.CurrentTime;
         float restartTime = gameRules.RestartRoundTime;
@@ -106,7 +95,6 @@ public partial class LiteMatchManager
         }
     }
 
-    // 專屬於 HUD 的防呆判斷
     private static bool IsPlayerValidHUD(CCSPlayerController? player)
     {
         return player != null
