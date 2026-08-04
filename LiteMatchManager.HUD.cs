@@ -23,6 +23,7 @@ public partial class LiteMatchManager
         
         _bShowingRoundStartHud = true;
         
+        // 精準讀取設定秒數 (預設 2 秒)
         AddTimer(Config.RoundStartHudDuration, () =>
         {
             HUD_Clear(); 
@@ -31,11 +32,12 @@ public partial class LiteMatchManager
         return HookResult.Continue;
     }
 
-    // 時間到，暴力清除畫面
+    // 時間到，暴力清除畫面 (精準瞬間消失，拒絕淡出)
     private void HUD_Clear()
     {
         _bShowingRoundStartHud = false;
 
+        // 1. 發送空字串洗掉文字內容
         foreach (var p in Utilities.GetPlayers())
         {
             if (IsPlayerValidHUD(p))
@@ -44,11 +46,15 @@ public partial class LiteMatchManager
             }
         }
 
-        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid && _gameRules != null)
+        // 2. 黑魔法：瞬間反轉 GameRestart 狀態並同步給客戶端，強行炸掉殘留的黑底框！
+        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid)
         {
-            // 黑魔法：瞬間反轉，下一微秒您的主程式 OnTick 就會把它校正回來，藉此製造一次畫面刷新！
-            _gameRules.GameRestart = !_gameRules.GameRestart; 
-            Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+            var gameRules = _hudGameRulesProxy.GameRules;
+            if (gameRules != null)
+            {
+                gameRules.GameRestart = !gameRules.GameRestart; 
+                Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+            }
         }
     }
 
@@ -90,6 +96,24 @@ public partial class LiteMatchManager
             if (IsPlayerValidHUD(player))
             {
                 player.PrintToCenterHtml(fullHudHtml);
+            }
+        }
+
+        // 【確保顯示】在凍結時間內同步狀態，防止計分板被系統卡住出不來
+        if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid)
+        {
+            var gameRules = _hudGameRulesProxy.GameRules;
+            if (gameRules != null && !gameRules.WarmupPeriod)
+            {
+                float currentTime = Server.CurrentTime;
+                float restartTime = gameRules.RestartRoundTime;
+                bool expectedState = restartTime < currentTime;
+
+                if (gameRules.GameRestart != expectedState)
+                {
+                    gameRules.GameRestart = expectedState;
+                    Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+                }
             }
         }
     }
