@@ -38,7 +38,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    // HUD 顯示秒數設定檔控制
     [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
     [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
     [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
@@ -55,7 +54,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ 狙 擊 戰 鬥 開 始 ★</font></b><br>";
     [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
-    // 回合開始的戰況 HUD 格式設定
     [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
@@ -64,20 +62,26 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.55_UltimateFix";
+    public override string ModuleVersion => "8.56_DualSystem";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純 8.55 版 + 雙字串防空框 + 瞬間洗黑框黑魔法 + 嚴格觀戰過濾";
+    public override string ModuleDescription => "一般HUD雙字串防閃 + 對戰資訊專屬SLAYER淡出寫法";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
-    // --- HUD 雙字串與黑魔法控制變數 ---
-    private CCSGameRulesProxy? _hudGameRulesProxy = null;
-    public bool bShowingHud = false;
-    private string _hudHtmlA = "";
-    private string _hudHtmlB = "";
-    private bool _hudToggle = false;
-    private CounterStrikeSharp.API.Modules.Timers.Timer? _hudTimer;
-    // ---------------------------------
+    // --- 系統A: 一般 HUD (準備/開始/終止) - 雙字串防閃防空框 ---
+    public bool bShowingGeneralHud = false;
+    private string _generalHudHtmlA = "";
+    private string _generalHudHtmlB = "";
+    private bool _generalHudToggle = false;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _generalHudTimer;
+
+    // --- 系統B: 對戰資訊 HUD (回合開始) - 採用 SLAYER 寫法 ---
+    public bool bShowingMatchInfoHud = false;
+    private string _matchInfoHudHtml = "";
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _matchInfoHudTimer;
+    private CCSGameRulesProxy? _gameRulesProxy;
+    private bool _runThisTick = false;
+    // ----------------------------------------------------
 
     private string _cachedPrefix = "";
     private HashSet<ulong> _readyPlayers = new(64);
@@ -98,102 +102,110 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
-    private CCSGameRules? _gameRules;
-    private bool _gameRulesInitialized;
-
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    private void InitializeGameRules()
+    // --- 系統A 的顯示函式 ---
+    private void ShowGeneralHud(string html, float duration = 0f)
     {
-        if (_gameRulesInitialized) return;
-        foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
-        {
-            _gameRules = proxy.GameRules;
-            break;
-        }
-        _gameRulesInitialized = _gameRules != null;
-    }
-
-   private void ShowHud(string html, float duration = 10f)
-    {
-        // 1. 【防空框優化】尾巴改用 HTML 零寬字元 (&#8203;)，完全不佔空間，完美騙過 UI 引擎
-        _hudHtmlA = html;
-        _hudHtmlB = html + "&#8203;"; 
-        bShowingHud = true;
+        _generalHudHtmlA = html;
+        _generalHudHtmlB = html + "&#8203;"; // 加零寬字元防空框
+        bShowingGeneralHud = true;
         
-        _hudTimer?.Kill();
-        _hudTimer = null;
+        // 確保不與對戰資訊打架
+        bShowingMatchInfoHud = false;
+        _matchInfoHudTimer?.Kill();
+        _matchInfoHudTimer = null;
+
+        _generalHudTimer?.Kill();
+        _generalHudTimer = null;
 
         if (duration > 0)
         {
-            _hudTimer = AddTimer(duration, () => 
+            _generalHudTimer = AddTimer(duration, () => 
             { 
-                bShowingHud = false; 
-
+                bShowingGeneralHud = false; 
                 foreach (var player in Utilities.GetPlayers())
                 {
-                    if (IsPlayerValid(player))
-                    {
-                        // 2. 【除框優化】發送真正的「空字串」，不帶任何 HTML 標籤，讓黑框瞬間折疊歸零
-                        player.PrintToCenterHtml("");
-                    }
+                    if (IsPlayerValid(player)) player.PrintToCenterHtml(""); // 清除
                 }
+            });
+        }
+    }
 
-                // 黑魔法：瞬間反轉遊戲規則狀態，強迫 Panorama UI 刷新，把折疊的殘留徹底洗掉
-                if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
-                {
-                    foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
-                    {
-                        _hudGameRulesProxy = proxy;
-                        break;
-                    }
-                }
+    // --- 系統B 的顯示函式 (專門給對戰資訊用) ---
+    private void ShowMatchInfoHud(string html, float duration)
+    {
+        _matchInfoHudHtml = html;
+        bShowingMatchInfoHud = true;
+        
+        // 確保不與一般資訊打架
+        bShowingGeneralHud = false;
+        _generalHudTimer?.Kill();
+        _generalHudTimer = null;
 
-                if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid && _gameRules != null)
-                {
-                    _gameRules.GameRestart = !_gameRules.GameRestart; 
-                    Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
-                }
+        _matchInfoHudTimer?.Kill();
+        _matchInfoHudTimer = null;
+
+        if (duration > 0)
+        {
+            _matchInfoHudTimer = AddTimer(duration, () => 
+            { 
+                bShowingMatchInfoHud = false; 
             });
         }
     }
 
     private void OnTick()
     {
-        if (bShowingHud) {
-            // 雙字串交替，破除 UI 凍結
-            _hudToggle = !_hudToggle;
-            string htmlToSend = _hudToggle ? _hudHtmlA : _hudHtmlB;
+        // 1. 發送系統 A (一般 HUD)
+        if (bShowingGeneralHud) {
+            _generalHudToggle = !_generalHudToggle;
+            string htmlToSend = _generalHudToggle ? _generalHudHtmlA : _generalHudHtmlB;
 
             foreach (var player in Utilities.GetPlayers())
             {
-                if (!IsPlayerValid(player))
-                    continue;
-
-                // 嚴格過濾：只有 T(2) 與 CT(3) 玩家看得見，觀戰者完全封鎖
-                if (player.TeamNum != 2 && player.TeamNum != 3)
-                    continue;
-
+                if (!IsPlayerValid(player) || (player.TeamNum != 2 && player.TeamNum != 3)) continue;
                 player.PrintToCenterHtml(htmlToSend);
             }
         }
-
-        if (!_gameRulesInitialized) InitializeGameRules();
-
-        if (_gameRules != null)
-        {
-            _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
+        // 2. 發送系統 B (對戰資訊 HUD)
+        else if (bShowingMatchInfoHud) {
+            foreach (var player in Utilities.GetPlayers())
+            {
+                if (!IsPlayerValid(player) || (player.TeamNum != 2 && player.TeamNum != 3)) continue;
+                player.PrintToCenterHtml(_matchInfoHudHtml);
+            }
         }
 
+        // 3. 執行 SLAYER 的防當機與自然淡出刷新邏輯 (系統 B 依賴這個)
+        _runThisTick = !_runThisTick;
+        if (_runThisTick)
+        {
+            var proxy = GetGameRulesProxy();
+            if (proxy != null && proxy.IsValid && proxy.GameRules != null && !proxy.GameRules.WarmupPeriod)
+            {
+                float currentTime = Server.CurrentTime;
+                float restartTime = proxy.GameRules.RestartRoundTime;
+                bool expectedState = restartTime < currentTime;
+
+                if (proxy.GameRules.GameRestart != expectedState)
+                {
+                    proxy.GameRules.GameRestart = expectedState;
+                    Utilities.SetStateChanged(proxy, "CCSGameRulesProxy", "m_pGameRules");
+                }
+            }
+        }
+
+        // 4. 處理未準備玩家提醒邏輯
         if (_pendingInitialReminders.Count > 0)
         {
-            float currentTime = Server.CurrentTime;
+            float currentTimeServer = Server.CurrentTime;
             List<ulong>? toRemove = null;
 
             foreach (var kvp in _pendingInitialReminders)
             {
-                if (currentTime >= kvp.Value)
+                if (currentTimeServer >= kvp.Value)
                 {
                     ulong steamId = kvp.Key;
                     toRemove ??= new List<ulong>();
@@ -216,14 +228,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                 }
             }
-
-            if (toRemove != null)
-            {
-                foreach (var id in toRemove)
-                {
-                    _pendingInitialReminders.Remove(id);
-                }
-            }
+            if (toRemove != null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
         }
     }
 
@@ -244,7 +249,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v8.55 (終極完美 HUD 版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v8.56 (雙系統 HUD 完美融合版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -351,18 +356,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
-        
-        // 回合開始事件
         RegisterEventHandler<EventRoundStart>(OnRoundStart);
 
         RegisterListener<Listeners.OnMapStart>(mapName => 
         {
             _isServerShuttingDown = false;
-            _gameRules = null;
-            _gameRulesInitialized = false;
             
-            bShowingHud = false;
-            _hudGameRulesProxy = null;
+            bShowingGeneralHud = false;
+            bShowingMatchInfoHud = false;
+            _gameRulesProxy = null;
             
             _cachedTeamT = null;
             _cachedTeamCT = null;
@@ -371,8 +373,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             Console.WriteLine($"[LiteMatch] [StartWarmup] 地圖載入完成！準備執行暖身設定檔：{Config.WarmupConfigName}");
             Server.NextFrame(() => { Server.ExecuteCommand($"exec {Config.WarmupConfigName}"); });
         });
-
-        if (hotReload) InitializeGameRules();
     }
 
     private int GetDynamicRequiredPlayers()
@@ -436,9 +436,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveTimer?.Kill();
         _liveTimer = null;
 
-        ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
+        // 【系統A】比賽終止採用 General HUD
+        ShowGeneralHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
         Server.ExecuteCommand("mp_warmup_start");
         
         var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
@@ -446,7 +447,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         else Server.ExecuteCommand("mp_warmup_pausetimer 1");
         
         ResetMatchState();
-        Console.WriteLine($"[LiteMatch] [AbortMatch] 對戰已終止！正在切換回暖身設定檔：{Config.WarmupConfigName}");
         Server.NextFrame(() => { Server.ExecuteCommand($"exec {Config.WarmupConfigName}"); });
     }
 
@@ -619,7 +619,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         else if (targetPlayers <= 4) prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
         else prepString = $"{Config.HudHtml_Prep3v3_Line1}<br>{string.Format(Config.HudHtml_Prep3v3_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
 
-        ShowHud(prepString, 0f);
+        // 【系統A】準備階段採用 General HUD
+        ShowGeneralHud(prepString, 0f);
         CheckMatchStart();
 
         if (!_isMatchLive)
@@ -657,7 +658,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             else if (targetPlayers <= 4) prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
             else prepString = $"{Config.HudHtml_Prep3v3_Line1}<br>{string.Format(Config.HudHtml_Prep3v3_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
 
-            ShowHud(prepString, 0f);
+            // 【系統A】準備階段採用 General HUD
+            ShowGeneralHud(prepString, 0f);
         }
     }
 
@@ -686,7 +688,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
             string hudStartText = $"{Config.HudHtml_Round1_Line1}<br>{Config.HudHtml_Round1_Line2}<br>";
             
-            ShowHud(hudStartText, Config.HudDuration_MatchStart);
+            // 【系統A】比賽開始提示採用 General HUD
+            ShowGeneralHud(hudStartText, Config.HudDuration_MatchStart);
 
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}對 戰 開 始！採 贏{ChatColors.Default} {ChatColors.Green}２０{ChatColors.Default} {ChatColors.Orange}回 合 制{ChatColors.Default}。");
@@ -698,7 +701,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _waitingTimer?.Kill();
             _waitingTimer = null;
             
-            Console.WriteLine($"[LiteMatch] [MatchLive] 雙方準備就緒 ({modeText})！將於 4 秒後執行開賽設定檔：{Config.LiveConfigName}");
             _liveTimer?.Kill();
             _liveTimer = AddTimer(4.0f, () => 
             {
@@ -731,7 +733,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         string finalHtml = $"{titleHtml}{tScoreHtml}{ctScoreHtml}";
         
-        ShowHud(finalHtml, Config.RoundStartHudDuration);
+        // 【系統B】唯獨對戰資訊！呼叫專屬的 MatchInfoHud (套用 SLAYER 寫法)
+        ShowMatchInfoHud(finalHtml, Config.RoundStartHudDuration);
 
         return HookResult.Continue;
     }
@@ -929,9 +932,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void ResetMatchState()
     {
-        bShowingHud = false;
-        _hudTimer?.Kill();
-        _hudTimer = null;
+        // 確保雙系統計時器都被重置
+        bShowingGeneralHud = false;
+        _generalHudTimer?.Kill();
+        _generalHudTimer = null;
+
+        bShowingMatchInfoHud = false;
+        _matchInfoHudTimer?.Kill();
+        _matchInfoHudTimer = null;
 
         _isMatchLive = false;
         _isChangingMap = false;
@@ -1002,6 +1010,21 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             && player.Pawn.IsValid
             && player.Connected == PlayerConnectedState.Connected
             && !player.IsHLTV;
+    }
+
+    // 給系統B (SLAYER機制) 使用的 Proxy 獲取函式
+    private CCSGameRulesProxy? GetGameRulesProxy()
+    {
+        if (_gameRulesProxy != null && _gameRulesProxy.IsValid) return _gameRulesProxy;
+
+        foreach (var entity in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+        {
+            _gameRulesProxy = entity;
+            return _gameRulesProxy;
+        }
+
+        _gameRulesProxy = null;
+        return null;
     }
     #endregion
 }
