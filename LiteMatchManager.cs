@@ -739,10 +739,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     var phase = Config.MatchModes[_currentPhaseIndex];
                     
-                    pawn.Health = phase.Health;
-                    if (phase.Armor == 0) { pawn.ArmorValue = 0; pawn.HasHelmet = false; }
-                    else if (phase.Armor == 1) { pawn.ArmorValue = 100; pawn.HasHelmet = false; }
-                    else if (phase.Armor == 2) { pawn.ArmorValue = 100; pawn.HasHelmet = true; }
+                   pawn.Health = phase.Health;
+
+              if (pawn.ItemServices != null)
+              {
+              if (phase.Armor == 0) { pawn.ArmorValue = 0; pawn.ItemServices.HasHelmet = false; }
+              else if (phase.Armor == 1) { pawn.ArmorValue = 100; pawn.ItemServices.HasHelmet = false; }
+              else if (phase.Armor == 2) { pawn.ArmorValue = 100; pawn.ItemServices.HasHelmet = true; }
+              }
 
                     player.GiveNamedItem("weapon_knife"); 
 
