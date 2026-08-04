@@ -38,7 +38,7 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MapList")] 
     public List<string> MapList { get; set; } = ["Aim_redline_vieforit:3290337428", "aimpro_vieforit:3290753343"];
 
-    // 【修改處】將寫死的 HUD 秒數全部加入設定檔
+    // HUD 顯示秒數設定檔控制
     [JsonPropertyName("HudDuration_MatchAbort")] public float HudDuration_MatchAbort { get; set; } = 5.0f;
     [JsonPropertyName("HudDuration_MatchStart")] public float HudDuration_MatchStart { get; set; } = 5.0f;
     [JsonPropertyName("RoundStartHudDuration")] public float RoundStartHudDuration { get; set; } = 2.0f;
@@ -55,7 +55,7 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ 狙 擊 戰 鬥 開 始 ★</font></b><br>";
     [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>２０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
-    // 【修改處】加入回合開始的戰況 HUD 格式設定
+    // 回合開始的戰況 HUD 格式設定
     [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'>{0}：</font> <font class='fontSize-l' color='gold'><font color='red'>{1}</font> 模式/搶<font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'>勝</font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
@@ -64,15 +64,20 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "8.54_UltimateFix";
+    public override string ModuleVersion => "8.55_UltimateFix";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純 8.54 版 + HUD觀戰者修正 + 回合戰況 + 秒數自訂";
+    public override string ModuleDescription => "純 8.55 版 + 雙字串防空框 + 瞬間洗黑框黑魔法 + 嚴格觀戰過濾";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
+    // --- HUD 雙字串與黑魔法控制變數 ---
+    private CCSGameRulesProxy? _hudGameRulesProxy = null;
     public bool bShowingHud = false;
-    public string currentHudHtml = "";
+    private string _hudHtmlA = "";
+    private string _hudHtmlB = "";
+    private bool _hudToggle = false;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _hudTimer;
+    // ---------------------------------
 
     private string _cachedPrefix = "";
     private HashSet<ulong> _readyPlayers = new(64);
@@ -110,9 +115,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _gameRulesInitialized = _gameRules != null;
     }
 
+    // --- 極致優化版 ShowHud (結合雙字串與黑魔法瞬間洗框) ---
     private void ShowHud(string html, float duration = 10f)
     {
-        currentHudHtml = html;
+        // 算 1 次雙字串，OnTick 輪流發送，徹底解決無字空框問題且 0 效能負擔
+        _hudHtmlA = html;
+        _hudHtmlB = html + "<font></font>"; 
         bShowingHud = true;
         
         _hudTimer?.Kill();
@@ -120,23 +128,55 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (duration > 0)
         {
-            _hudTimer = AddTimer(duration, () => { bShowingHud = false; });
+            _hudTimer = AddTimer(duration, () => 
+            { 
+                bShowingHud = false; 
+
+                // 1. 先送空字串，把文字瞬間洗掉
+                foreach (var player in Utilities.GetPlayers())
+                {
+                    if (IsPlayerValid(player))
+                    {
+                        player.PrintToCenterHtml("<font></font>");
+                    }
+                }
+
+                // 2. 黑魔法：瞬間反轉遊戲規則狀態，強迫 Panorama UI 瞬間把殘留黑框炸掉！
+                if (_hudGameRulesProxy == null || !_hudGameRulesProxy.IsValid)
+                {
+                    foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+                    {
+                        _hudGameRulesProxy = proxy;
+                        break;
+                    }
+                }
+
+                if (_hudGameRulesProxy != null && _hudGameRulesProxy.IsValid && _gameRules != null)
+                {
+                    _gameRules.GameRestart = !_gameRules.GameRestart; 
+                    Utilities.SetStateChanged(_hudGameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+                }
+            });
         }
     }
 
     private void OnTick()
     {
         if (bShowingHud) {
+            // 雙字串交替，破除 UI 凍結
+            _hudToggle = !_hudToggle;
+            string htmlToSend = _hudToggle ? _hudHtmlA : _hudHtmlB;
+
             foreach (var player in Utilities.GetPlayers())
             {
                 if (!IsPlayerValid(player))
                     continue;
 
-                // 【修改處】嚴格攔截：TeamNum 為 2(T) 或 3(CT) 才能看到 HUD，觀戰者與未分配者看不到
+                // 嚴格過濾：只有 T(2) 與 CT(3) 玩家看得見，觀戰者完全封鎖
                 if (player.TeamNum != 2 && player.TeamNum != 3)
                     continue;
 
-                player.PrintToCenterHtml(currentHudHtml);
+                player.PrintToCenterHtml(htmlToSend);
             }
         }
 
@@ -205,7 +245,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v8.54 (修正觀戰者 HUD) 啟動！");
+        Console.WriteLine("  LiteMatchManager v8.55 (終極完美 HUD 版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -313,7 +353,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
         
-        // 【修改處】註冊回合開始事件
+        // 回合開始事件
         RegisterEventHandler<EventRoundStart>(OnRoundStart);
 
         RegisterListener<Listeners.OnMapStart>(mapName => 
@@ -321,7 +361,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _isServerShuttingDown = false;
             _gameRules = null;
             _gameRulesInitialized = false;
+            
             bShowingHud = false;
+            _hudGameRulesProxy = null;
+            
             _cachedTeamT = null;
             _cachedTeamCT = null;
 
@@ -394,7 +437,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveTimer?.Kill();
         _liveTimer = null;
 
-        // 【修改處】改用設定檔內的秒數
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
@@ -645,7 +687,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
             string hudStartText = $"{Config.HudHtml_Round1_Line1}<br>{Config.HudHtml_Round1_Line2}<br>";
             
-            // 【修改處】使用設定檔定義的秒數
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
 
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
@@ -668,13 +709,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // 【修改處】新增事件：回合開始時執行計分板 HUD 邏輯
     private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
     {
-        // 只在比賽進行中顯示計分 HUD
         if (!_isMatchLive) return HookResult.Continue;
 
-        // 確保緩存取得分數實體
         if (_cachedTeamT == null || !_cachedTeamT.IsValid || _cachedTeamCT == null || !_cachedTeamCT.IsValid)
         {
             foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
@@ -687,15 +725,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreT = _cachedTeamT != null ? _cachedTeamT.Score : 0;
         int scoreCT = _cachedTeamCT != null ? _cachedTeamCT.Score : 0;
 
-        // {0} 戰況文字標題, {1} 模式文字 (單挑/團戰)
         string modeStr = _liveMatchTargetPlayers == 2 ? "單 挑" : "團 戰";
-        string titleHtml = string.Format(Config.HudHtml_RoundStart_Title, "戰況資訊", modeStr);
+        string titleHtml = string.Format(Config.HudHtml_RoundStart_Title, "對戰進度", modeStr);
         string tScoreHtml = string.Format(Config.HudHtml_RoundStart_TScore, scoreT);
         string ctScoreHtml = string.Format(Config.HudHtml_RoundStart_CTScore, scoreCT);
 
         string finalHtml = $"{titleHtml}{tScoreHtml}{ctScoreHtml}";
         
-        // 使用設定檔秒數呼出 HUD
         ShowHud(finalHtml, Config.RoundStartHudDuration);
 
         return HookResult.Continue;
