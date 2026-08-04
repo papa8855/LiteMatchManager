@@ -81,12 +81,13 @@ public class LiteMatchConfig : BasePluginConfig
     public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
+// 加入 partial 確保可以跟檔案二完美結合
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
     public override string ModuleVersion => "8.54_UltimateFix";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "純版 + 30勝免死金牌 (完美防卡圖) + 轉發聊天 + 雙重HUD支援 (含黑魔法)";
+    public override string ModuleDescription => "純版 + 30勝免死金牌 (完美防卡圖) + 轉發聊天 + 獨立雙重HUD";
 
     public LiteMatchConfig Config { get; set; } = new LiteMatchConfig();
 
@@ -110,14 +111,94 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
     private CCSGameRules? _gameRules;
-    private CCSGameRulesProxy? _gameRulesProxy;
+    private CCSGameRulesProxy? _gameRulesProxy; // 黑魔法專用
     private bool _gameRulesInitialized;
-    private bool _runThisTick = false;
 
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
     private bool _bShowingRoundStartHud = false;
+
+    private void InitializeGameRules()
+    {
+        if (_gameRulesInitialized) return;
+        
+        foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+        {
+            _gameRulesProxy = proxy; // 抓取 Proxy 實體
+            _gameRules = proxy.GameRules;
+            break;
+        }
+        
+        _gameRulesInitialized = _gameRules != null;
+    }
+
+    // 第一種 HUD：完全保留您原本的寫法，絕不干涉！
+    private void ShowHud(string html)
+    {
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p != null && p.IsValid && !p.IsBot) p.PrintToCenterHtml(html);
+        }
+    }
+
+    private void OnTick()
+    {
+        // ==========================================
+        // 呼叫檔案二：第二種 HUD (30勝計分板) 的渲染
+        // ==========================================
+        UpdateRoundStartHud();
+
+        // ==========================================
+        // 以下為您原本的未準備玩家踢除邏輯 (完全保留)
+        // ==========================================
+        if (!_gameRulesInitialized) InitializeGameRules();
+
+        if (_gameRules != null)
+        {
+            _gameRules.GameRestart = _gameRules.RestartRoundTime < Server.CurrentTime;
+        }
+
+        if (_pendingInitialReminders.Count > 0)
+        {
+            float currentTime = Server.CurrentTime;
+            List<ulong>? toRemove = null;
+
+            foreach (var kvp in _pendingInitialReminders)
+            {
+                if (currentTime >= kvp.Value)
+                {
+                    ulong steamId = kvp.Key;
+                    toRemove ??= new List<ulong>();
+                    toRemove.Add(steamId);
+
+                    if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                    {
+                        foreach (var p in Utilities.GetPlayers())
+                        {
+                            if (p != null && p.IsValid && p.SteamID == steamId && (p.TeamNum == 2 || p.TeamNum == 3))
+                            {
+                                int elapsed = 0;
+                                if (_playerUnreadyTime.TryGetValue(steamId, out int val)) elapsed = val;
+                                int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
+                                
+                                p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (toRemove != null)
+            {
+                foreach (var id in toRemove)
+                {
+                    _pendingInitialReminders.Remove(id);
+                }
+            }
+        }
+    }
 
     public void OnConfigParsed(LiteMatchConfig config)
     {
@@ -136,7 +217,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager v8.54 (究極防卡圖 30勝版) 啟動！");
+        Console.WriteLine("  LiteMatchManager v8.54 (雙重獨立HUD + 黑魔法版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -149,7 +230,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Handled;
         });
         
-        RegisterListener<Listeners.OnTick>(OnTick); 
+        RegisterListener<Listeners.OnTick>(OnTick);
         
         RegisterEventHandler<EventMapShutdown>((@event, info) => {
             _isServerShuttingDown = true;
@@ -285,19 +366,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
-    // ==========================================
-    // 關鍵修改：計時器結束瞬間呼叫洗除函數
-    // ==========================================
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
 
         _bShowingRoundStartHud = true;
         
-        // 精準 2 秒計時器
+        // 2秒後觸發檔案二的洗除邏輯
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            // 呼叫 HUD.cs 中的強力洗除邏輯
             ClearRoundStartHud(); 
         });
 
@@ -370,7 +447,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _liveTimer?.Kill();
         _liveTimer = null;
         
-        // 戰鬥中斷時也強制洗掉 HUD
+        // 若中途退出也確保畫面清空
         ClearRoundStartHud(); 
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
