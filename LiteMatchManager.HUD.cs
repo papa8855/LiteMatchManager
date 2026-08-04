@@ -72,21 +72,20 @@ public partial class LiteMatchManager
 
     // 時間到，強制清除畫面
     private void HUD_Clear()
-    {
-        _bShowingRoundStartHud = false;
-        _hudTimer?.Kill();
-        _hudTimer = null;
+{
+    _bShowingRoundStartHud = false;
+    _hudTimer?.Kill();
+    _hudTimer = null;
 
-        foreach (var player in Utilities.GetPlayers())
+    foreach (var player in Utilities.GetPlayers())
+    {
+        if (IsPlayerValidHUD(player) && (player.TeamNum == 2 || player.TeamNum == 3))
         {
-            // 一樣只針對場上的 T 和 CT 進行清除
-            if (IsPlayerValidHUD(player) && (player.TeamNum == 2 || player.TeamNum == 3))
-            {
-                // 【終極殺招】用 HTML 頻道傳送空字串與 0 秒持續時間，強行突破 5 秒限制瞬間關閉
-                player.PrintToCenterHtml("", 0.1f);
-            }
+            // 改用 0.1 秒的極短清除時間，避免無字框殘影卡在畫面
+            player.PrintToCenterHtml("", 0.1f); 
         }
     }
+}
 
     // 專屬於 HUD 的防呆判斷
     private static bool IsPlayerValidHUD(CCSPlayerController? player)
