@@ -81,7 +81,6 @@ public class LiteMatchConfig : BasePluginConfig
     public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'>比 賽 贏</font> <font class='fontSize-l' color='Green'><b>３０</b></font> <font class='fontSize-l' color='gold'>回合 為 主</font>";
 }
 
-// 【關鍵修改】：加上 partial 關鍵字
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
@@ -110,7 +109,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer; 
 
-    // 【修改處】新增黑魔法所需的 Proxy 與 Tick 變數
     private CCSGameRules? _gameRules;
     private CCSGameRulesProxy? _gameRulesProxy;
     private bool _gameRulesInitialized;
@@ -151,7 +149,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Handled;
         });
         
-        RegisterListener<Listeners.OnTick>(OnTick); // OnTick 實作於 HUD.cs
+        RegisterListener<Listeners.OnTick>(OnTick); 
         
         RegisterEventHandler<EventMapShutdown>((@event, info) => {
             _isServerShuttingDown = true;
@@ -287,14 +285,20 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
+    // ==========================================
+    // 關鍵修改：計時器結束瞬間呼叫洗除函數
+    // ==========================================
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive) return HookResult.Continue;
 
         _bShowingRoundStartHud = true;
+        
+        // 精準 2 秒計時器
         AddTimer(Config.RoundStartHudDuration, () =>
         {
-            _bShowingRoundStartHud = false;
+            // 呼叫 HUD.cs 中的強力洗除邏輯
+            ClearRoundStartHud(); 
         });
 
         return HookResult.Continue;
@@ -365,7 +369,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         
         _liveTimer?.Kill();
         _liveTimer = null;
-        _bShowingRoundStartHud = false;
+        
+        // 戰鬥中斷時也強制洗掉 HUD
+        ClearRoundStartHud(); 
 
         ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>");
 
