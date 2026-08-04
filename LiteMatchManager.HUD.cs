@@ -21,7 +21,8 @@ public partial class LiteMatchManager
         
         _bShowingRoundStartHud = true;
         
-        AddTimer(Config.RoundStartHudDuration, () =>
+        // 【堅持 2 秒！】
+        AddTimer(2.0f, () =>
         {
             HUD_Clear(); 
         });
@@ -32,21 +33,37 @@ public partial class LiteMatchManager
     // 時間到，暴力清除畫面
     private void HUD_Clear()
     {
+        // 1. 停止發送任何新的 HUD (絕對不要發送空字串)
         _bShowingRoundStartHud = false;
 
-        // 【關鍵修復】
-        // 1. 絕對不要呼叫 PrintToCenterHtml("")！只要呼叫，Panorama 就會畫出無字底框。
-        // 2. 完全依賴您的「黑魔法」來強制關閉客戶端的 HUD 顯示。
-        // （因為是 partial class，我們直接使用主程式已經緩存好的 _gameRules）
-
+        // 2. 因為伺服器只有這一個插件，我們直接發動黑魔法！
         if (_gameRulesInitialized && _gameRules is not null)
         {
             foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
             {
-                // 瞬間反轉狀態，強制 CS2 客戶端刷新並收起所有 Center 畫面
-                _gameRules.GameRestart = !_gameRules.GameRestart; 
+                // 第一步：瞬間反轉狀態，強迫客戶端 Panorama UI 崩解並收起 HTML 框
+                _gameRules.GameRestart = !_gameRules.GameRestart;
                 Utilities.SetStateChanged(proxy, "CCSGameRulesProxy", "m_pGameRules");
-                break;
+
+                // 第二步：利用你提到的 ServerGraphic 邏輯進行「狀態強制校正」
+                // 為了確保客戶端確實收到了上一步的「反轉」訊號，我們延遲 0.1 秒後再把它校正回來
+                AddTimer(0.1f, () =>
+                {
+                    if (_gameRules == null || !proxy.IsValid) return;
+
+                    float currentTime = Server.CurrentTime; //
+                    float restartTime = _gameRules.RestartRoundTime; //[cite: 3]
+                    bool expectedState = restartTime < currentTime; //[cite: 3]
+
+                    // 檢查並強制回歸正確狀態，確保遊戲進程不會壞掉[cite: 3]
+                    if (_gameRules.GameRestart != expectedState) //[cite: 3]
+                    {
+                        _gameRules.GameRestart = expectedState; //[cite: 3]
+                        Utilities.SetStateChanged(proxy, "CCSGameRulesProxy", "m_pGameRules"); //[cite: 3]
+                    }
+                });
+                
+                break; // 處理完第一個代理就退出
             }
         }
     }
@@ -65,7 +82,6 @@ public partial class LiteMatchManager
             }
         }
 
-        // [優化] null 聚合運算子 ?? ，取代三元運算子，速度更快
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
         string modeStr = _liveMatchTargetPlayers <= 2 ? "單 挑" : "團 戰";
@@ -86,7 +102,6 @@ public partial class LiteMatchManager
     // 專屬於 HUD 的防呆判斷
     private static bool IsPlayerValidHUD(CCSPlayerController? player)
     {
-        // [優化] .NET 10 屬性模式匹配，取代落落長的 null 與布林值判斷
         return player is { 
             IsValid: true, 
             IsBot: false, 
