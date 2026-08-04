@@ -74,7 +74,7 @@ public partial class LiteMatchManager
             if (IsPlayerValidHUD(player) && (player.TeamNum == 2 || player.TeamNum == 3))
             {
                 // 【頻道覆寫殺招】用原生文字頻道的空白，強行蓋掉 HTML 的 5 秒限制
-                player.PrintToCenter(" "); 
+                player.PrintToCenterHtml("", 0); 
             }
         }
     }
