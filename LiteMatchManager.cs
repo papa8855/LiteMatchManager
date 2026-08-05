@@ -475,7 +475,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _phaseStartScoreCT = scoreCT;
                 
                 var nextPhase = Config.MatchModes[_currentPhaseIndex];
-                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【{ChatColors.Green}{nextPhase.Name}{ChatColors.Gold}】模 式");
+                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【 {ChatColors.Green}{nextPhase.Name}{ChatColors.Gold} 】模 式");
             }
         }
     }
@@ -500,14 +500,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_cachedTeamCT != null) scoreCT = _cachedTeamCT.Score;
 
         // 廣播時直接顯示全場真實總分，不扣除階段分數
-        string winnerName = scoreT > scoreCT ? "恐怖份子 (T)" : "反恐小組 (CT)";
-        string loserName = scoreT > scoreCT ? "反恐小組 (CT)" : "恐怖份子 (T)";
+        string winnerName = scoreT > scoreCT ? "恐怖份子" : "反恐小組";
+        string loserName = scoreT > scoreCT ? "反恐小組" : "恐怖份子";
         
         int winnerScore = Math.Max(scoreT, scoreCT);
         int loserScore = Math.Min(scoreT, scoreCT);
         string scoreString = $"{winnerScore} : {loserScore}";
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({winnerScore} : {loserScore}) {ChatColors.Gold}贏得了最終勝利");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green} {winnerScore} : {loserScore} {ChatColors.Gold}贏得了最終勝利");
 
         TriggerMapChange();
         return HookResult.Continue;
