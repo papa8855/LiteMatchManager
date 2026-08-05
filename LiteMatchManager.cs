@@ -777,7 +777,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _phaseStartScoreT = 0;
             _phaseStartScoreCT = 0;
             
-            string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
+            string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 隊";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
