@@ -507,7 +507,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int loserScore = Math.Min(scoreT, scoreCT);
         string scoreString = $"{winnerScore} : {loserScore}";
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({scoreString}) {ChatColors.Gold}的總分數贏過 {ChatColors.Lime}{loserName}");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({winnerScore} : {loserScore}) {ChatColors.Gold}贏得了最終勝利");
 
         TriggerMapChange();
         return HookResult.Continue;
