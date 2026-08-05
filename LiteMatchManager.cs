@@ -324,7 +324,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         
                         if (_liveMatchTargetPlayers == 2)
                         {
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}放 棄 比 賽，強 制 終 止！");
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}放 棄 比 賽，強 制 終 止");
                             Server.NextFrame(AbortMatch); 
                         }
                         else
@@ -376,7 +376,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             else 
                             {
                                 _readyPlayers.Add(steamId);
-                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 加 團 戰 比 賽");
+                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 入 團 戰 比 賽");
                             }
                         }
                     }
@@ -475,7 +475,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _phaseStartScoreCT = scoreCT;
                 
                 var nextPhase = Config.MatchModes[_currentPhaseIndex];
-                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【 {ChatColors.Green}{nextPhase.Name}{ChatColors.Gold} 】模 式");
+                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入 更 換【 {ChatColors.Green}{nextPhase.Name}{ChatColors.Gold} 】模 式");
             }
         }
     }
@@ -550,7 +550,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     if (_liveMatchTargetPlayers == 2)
                     {
-                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，嚴 禁 路 人 加 入");
+                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，嚴 禁 中 途 加 入");
                         return HookResult.Handled;
                     }
                     else
@@ -668,7 +668,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (!isPrimary && !isSecondary)
         {
-            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器");
+            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【 {phase.Name} 】{ChatColors.White} 模式，禁 止 使 用 該 武 器");
             return;
         }
 
