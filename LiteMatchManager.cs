@@ -177,7 +177,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             {
                 foreach (var p in Utilities.GetPlayers())
                 {
-                    if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml(_activeCenterMessage);
+                    // 已經加入 TeamNum: 2 or 3 的判斷，不發給觀察者
+                    if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
                 }
             }
             else
@@ -185,7 +186,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _activeCenterMessage = "";
                 foreach (var p in Utilities.GetPlayers())
                 {
-                    if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml("&#8203;", 0);
+                    // 已經加入 TeamNum: 2 or 3 的判斷，不發給觀察者
+                    if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
                 }
             }
         }
@@ -503,6 +505,20 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string winnerName = scoreT > scoreCT ? "恐怖份子" : "反恐小組";
         string loserName = scoreT > scoreCT ? "反恐小組" : "恐怖份子";
         
+        // 加入 1V1 玩家名稱判斷
+        if (_liveMatchTargetPlayers == 2)
+        {
+            string nameT = "恐怖份子";
+            string nameCT = "反恐小組";
+            foreach (var p in Utilities.GetPlayers())
+            {
+                if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 2 }) nameT = p.PlayerName;
+                else if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 3 }) nameCT = p.PlayerName;
+            }
+            winnerName = scoreT > scoreCT ? nameT : nameCT;
+            loserName = scoreT > scoreCT ? nameCT : nameT;
+        }
+
         int winnerScore = Math.Max(scoreT, scoreCT);
         int loserScore = Math.Min(scoreT, scoreCT);
         string scoreString = $"{winnerScore} : {loserScore}";
@@ -777,7 +793,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _phaseStartScoreT = 0;
             _phaseStartScoreCT = 0;
             
-            string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 隊";
+            string modeText = totalPlayers == 2 ? "1 v 1 " : $"{activeT} v {activeCT} ";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
@@ -786,6 +802,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
+
+            // 加入 2V2 團戰提示 log
+            if (activeT >= 2 && activeCT >= 2)
+            {
+                Console.WriteLine("[2V2團戰]比賽開始");
+            }
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
