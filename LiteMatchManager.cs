@@ -781,7 +781,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
-            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, phaseName)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
+            // ★ 核心修改：將原先的 phaseName 改為帶入 modeText ★
+            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, modeText)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 傢 已 準 備，{modeText} 比 賽 開 始");
@@ -800,7 +801,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             });
         }
     }
-
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
