@@ -105,9 +105,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.17_ReconnectProtection";
+    public override string ModuleVersion => "9.18_HudFix";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "加入斷線重連保護與效能最佳化版";
+    public override string ModuleDescription => "加入斷線重連保護與HUD顯示最佳化版";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -132,7 +132,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
     
-    // 【新增】：斷線計時器紀錄
+    // 斷線計時器紀錄
     private Dictionary<ulong, CounterStrikeSharp.API.Modules.Timers.Timer?> _disconnectTimers = new();
 
     private bool _isMatchLive = false;
@@ -264,7 +264,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
-        // 【修改】：斷線事件加入 3 分鐘保護機制
+        // 斷線事件加入 3 分鐘保護機制
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
@@ -301,7 +301,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         });
 
-        // 【修改】：隊伍變更事件加入重連阻斷計時器與手動觀戰防範
+        // 隊伍變更事件加入重連阻斷計時器與手動觀戰防範
         RegisterEventHandler<EventPlayerTeam>((@event, info) =>
         {
             if (@event.Userid is { IsValid: true, Handle: not 0 } player)
@@ -719,7 +719,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 傢 已 準 備，{modeText} 比 賽 開 始");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}第一階段：{ChatColors.Gold}【{phaseName}】{ChatColors.Orange} {ChatColors.Green}{displayLimit}");
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
@@ -952,7 +951,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
         
-        // 【新增】：重置狀態時清除所有斷線保護計時器
+        // 重置狀態時清除所有斷線保護計時器
         foreach (var timer in _disconnectTimers.Values) timer?.Kill();
         _disconnectTimers.Clear();
 
@@ -982,6 +981,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
+
+        // 【新增】：如果雙方都還是 0 分，直接跳過不顯示計分板 HUD，避免與開賽畫面重疊或產生空框
+        if (scoreT == 0 && scoreCT == 0)
+        {
+            return HookResult.Continue;
+        }
         
         var currentPhase = Config.MatchModes[_currentPhaseIndex];
 
