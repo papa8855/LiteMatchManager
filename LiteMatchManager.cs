@@ -475,8 +475,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【{ChatColors.Green}{nextPhase.Name}{ChatColors.Gold}】模 式！");
                 
                 // 顯示階段切換提示
-                string transitionHud = $"<font class='fontSize-l' color='lime'><b>✦ 階 段 切 換 ✦</b></font><br><font class='fontSize-l' color='white'><b>進 入：</font><font class='fontSize-l' color='gold'><b>【{nextPhase.Name}】模式</b></font>";
-                ShowHud(transitionHud, 3.0f);
+                string transitionHud = $"<font class='fontSize-l' color='lime'><b>✦ 階 段 切 換 ✦</b></font><br><font class='fontSize-l' color='white'><b>進 入：</font><font class='fontSize-l' color='gold'><b>【{nextPhase.Name}】</b><font class='fontSize-l' color='white'>模式</b></font>";
+                ShowHud(transitionHud, 2.0f);
             }
         }
     }
