@@ -785,7 +785,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, modeText)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
-            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 傢 已 準 備，{modeText} 比 賽 開 始");
+            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
