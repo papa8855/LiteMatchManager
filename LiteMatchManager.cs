@@ -33,7 +33,6 @@ public class LiteMatchConfig : BasePluginConfig
 {
     [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 2; 
     [JsonPropertyName("KickUnreadyPlayerTime")] public int KickUnreadyPlayerTime { get; set; } = 360;
-    [JsonPropertyName("ReconnectGracePeriod")] public int ReconnectGracePeriod { get; set; } = 180; 
     
     [JsonPropertyName("UnreadyReminderInterval")] public int UnreadyReminderInterval { get; set; } = 60;
     [JsonPropertyName("PublicUnreadyReminderInterval")] public int PublicUnreadyReminderInterval { get; set; } = 15;
@@ -91,13 +90,15 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_Prep2v2_Line1")] public string HudHtml_Prep2v2_Line1 { get; set; } = "<font class='fontSize-l' color='lime'><b>✦</font> <font class='fontSize-l' color='white'>人 數 觸 發 <font class='fontSize-l' color='gold'>2 v 2</font> 團 戰 </font><font class='fontSize-l' color='lime'>✦</font></b><br>";
     [JsonPropertyName("HudHtml_Prep2v2_Line2")] public string HudHtml_Prep2v2_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>已 準 備：</font><font class='fontSize-l' color='lime'>{0} / {2}</font><font class='fontSize-l' color='white'> 尚 缺 <font class='fontSize-l' color='lime'><b>{1}</b></font> 人</font></b>";
     
-    [JsonPropertyName("HudHtml_MatchAbort_Line1")] public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 逃 跑 ， 戰 鬥 已 終 止</font></b><br>";
+    [JsonPropertyName("HudHtml_MatchAbort_Line1")] public string HudHtml_MatchAbort_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>有 玩 家 離 開 ， 戰 鬥 已 終 止</font></b><br>";
     [JsonPropertyName("HudHtml_MatchAbort_Line2")] public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
     
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ {0} 戰 鬥 開 始 ★</font></b><br>";
-    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>{0}</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
     
-    [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='gold'><font color='red'>{0}</font> 模式 / <font class='fontSize-l' color='Green'><b>{1}</b></font><br>";
+    // 修復 HTML 標籤
+    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採 <font color='lime'>{0}</font> 回 合 勝 利 制</b></font>";
+    [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='gold'><font color='red'>{0}</font> 模式 / <font color='Green'><b>{1}</b></font></font><br>";
+    
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br>";
 }
@@ -105,9 +106,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.19_No1v1Hud";
+    public override string ModuleVersion => "9.22_PerfectLogic";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "1v1不顯示HUD，2v2才觸發HUD";
+    public override string ModuleDescription => "1v1立即終止，2v2開放補位與HUD修復版";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -131,8 +132,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, string> _playerSecondary = new(64);
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
-    
-    private Dictionary<ulong, CounterStrikeSharp.API.Modules.Timers.Timer?> _disconnectTimers = new();
 
     private bool _isMatchLive = false;
     private bool _isChangingMap = false; 
@@ -248,7 +247,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager (斷線重連保護版) 啟動！");
+        Console.WriteLine("  LiteMatchManager (完美邏輯防護版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -263,6 +262,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
+        // 處理玩家完全斷線離開伺服器
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
@@ -272,18 +272,20 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                 if (_isMatchLive && _readyPlayers.Contains(steamId))
                 {
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 {pName} 斷 線，保 留 參 賽 資 格 {Config.ReconnectGracePeriod} 秒！");
-                    
-                    _disconnectTimers[steamId] = AddTimer(Config.ReconnectGracePeriod, () => 
+                    _readyPlayers.Remove(steamId);
+
+                    if (_liveMatchTargetPlayers == 2)
                     {
-                        if (_isMatchLive && _readyPlayers.Contains(steamId))
-                        {
-                            _readyPlayers.Remove(steamId);
-                            _disconnectTimers.Remove(steamId);
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}玩 家 {pName} 逾 時 未 歸，比 賽 強 制 終 止！");
-                            AbortMatch();
-                        }
-                    });
+                        // 1v1 單挑，對手斷線直接終止
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}單 挑 玩 家 {pName} 斷 線，比 賽 強 制 終 止！");
+                        AbortMatch();
+                    }
+                    else
+                    {
+                        // 2v2 團戰，釋出名額
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}團 戰 玩 家 {ChatColors.Red}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位！");
+                        Server.NextFrame(CheckPhaseWin); // 如果整隊斷光，CheckPhaseWin 會自動終止
+                    }
                 }
                 else
                 {
@@ -299,21 +301,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         });
 
+        // 處理玩家手動切換隊伍 (例如跳觀戰)
         RegisterEventHandler<EventPlayerTeam>((@event, info) =>
         {
             if (@event.Userid is { IsValid: true, Handle: not 0 } player)
             {
                 ulong steamId = player.SteamID;
                 int newTeam = @event.Team; 
-
-                if (_disconnectTimers.TryGetValue(steamId, out var timer))
-                {
-                    timer?.Kill(); 
-                    _disconnectTimers.Remove(steamId);
-                    if (newTeam is 2 or 3)
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 已 重 連 回 到 比 賽！");
-                }
                 
+                // 玩家手動放棄比賽跳觀戰
                 if (newTeam is 0 or 1) 
                 {
                     _pendingInitialReminders.Remove(steamId);
@@ -322,8 +318,17 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     if (_isMatchLive && _readyPlayers.Contains(steamId))
                     {
                         _readyPlayers.Remove(steamId);
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}手 動 放 棄 比 賽，強 制 終 止！");
-                        Server.NextFrame(AbortMatch); 
+                        
+                        if (_liveMatchTargetPlayers == 2)
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}放 棄 比 賽，強 制 終 止！");
+                            Server.NextFrame(AbortMatch); 
+                        }
+                        else
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}離 開 隊 伍，已 釋 出 補 位 名 額！");
+                            Server.NextFrame(CheckPhaseWin);
+                        }
                     }
                     else if (_readyPlayers.Remove(steamId))
                     {
@@ -335,26 +340,45 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
                 else if (newTeam is 2 or 3)
                 {
+                    // 比賽中，路人嘗試強行切換隊伍
                     if (!_readyPlayers.Contains(steamId))
                     {
-                        int liveTeamMax = _liveMatchTargetPlayers / 2;
-                        int currentCount = 0;
-                        foreach (var p in Utilities.GetPlayers())
+                        if (_liveMatchTargetPlayers == 2)
                         {
-                            if (p is { IsValid: true, IsBot: false, TeamNum: var team } && team == newTeam && p.SteamID != steamId)
-                                currentCount++;
-                        }
-                        
-                        if (currentCount >= liveTeamMax)
-                        {
+                            // 單挑不開放補位
                             Server.NextFrame(() => {
                                 if (player.IsValid) {
                                     player.ChangeTeam(CsTeam.Spectator);
-                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}比 賽 已 開 始，無 法 中 途 加 入");
+                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，不 開 放 補 位");
                                 }
                             });
                         }
-                        else _readyPlayers.Add(steamId);
+                        else 
+                        {
+                            // 團戰判斷人數是否滿了
+                            int liveTeamMax = _liveMatchTargetPlayers / 2;
+                            int currentCount = 0;
+                            foreach (var p in Utilities.GetPlayers())
+                            {
+                                if (p is { IsValid: true, IsBot: false, TeamNum: var team } && team == newTeam && p.SteamID != steamId)
+                                    currentCount++;
+                            }
+                            
+                            if (currentCount >= liveTeamMax)
+                            {
+                                Server.NextFrame(() => {
+                                    if (player.IsValid) {
+                                        player.ChangeTeam(CsTeam.Spectator);
+                                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}該 隊 伍 補 位 已 滿，無 法 加 入");
+                                    }
+                                });
+                            }
+                            else 
+                            {
+                                _readyPlayers.Add(steamId);
+                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 成 功 補 位 加 入 團 戰 比 賽！");
+                            }
+                        }
                     }
                     Server.NextFrame(CheckPhaseWin);
                 }
@@ -414,6 +438,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 else if (p.TeamNum == 3) activeCT++;
             }
         }
+        
+        // 這裡就是判定：如果隊伍斷線到沒人，強制終止
         if (activeT == 0 || activeCT == 0) { AbortMatch(); return; }
 
         if (Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return;
@@ -477,19 +503,26 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                 if (!_readyPlayers.Contains(player.SteamID))
                 {
-                    int liveTeamMax = _liveMatchTargetPlayers / 2;
-                    int currentTeamCount = 0;
-                    foreach (var p in Utilities.GetPlayers())
+                    if (_liveMatchTargetPlayers == 2)
                     {
-                        if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: var team } && team == teamIndex && p.SteamID != player.SteamID)
-                            currentTeamCount++;
-                    }
-                    
-                    if (currentTeamCount >= liveTeamMax)
-                    {
-                        string modeText = _liveMatchTargetPlayers == 2 ? "單 挑" : "團 戰";
-                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}{modeText} 比 賽 已 開 始，無 法 中 途 加 入");
+                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，嚴 禁 路 人 補 位 加 入");
                         return HookResult.Handled;
+                    }
+                    else
+                    {
+                        int liveTeamMax = _liveMatchTargetPlayers / 2;
+                        int currentTeamCount = 0;
+                        foreach (var p in Utilities.GetPlayers())
+                        {
+                            if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: var team } && team == teamIndex && p.SteamID != player.SteamID)
+                                currentTeamCount++;
+                        }
+                        
+                        if (currentTeamCount >= liveTeamMax)
+                        {
+                            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}補 位 失 敗！該 隊 伍 已 經 滿 員");
+                            return HookResult.Handled;
+                        }
                     }
                 }
             }
@@ -644,7 +677,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
         
-        // 只有 2v2 團戰 (目標人數大於 2) 時，才顯示中間的 HTML 準備框
         if (targetPlayers > 2)
         {
             string prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
@@ -677,7 +709,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
             
-            // 只有 2v2 團戰 (目標人數大於 2) 時，才顯示中間的 HTML 準備框
             if (targetPlayers > 2)
             {
                 string prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
@@ -712,6 +743,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string modeText = totalPlayers == 2 ? "1 v 1 單 挑" : $"{activeT} v {activeCT} 團 戰";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             
+            // 抓取 DisplayTarget 用於第一回合開賽 HUD
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
             string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, phaseName)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
@@ -949,9 +981,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _hasReceivedInitialReminder.Clear();
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
-        
-        foreach (var timer in _disconnectTimers.Values) timer?.Kill();
-        _disconnectTimers.Clear();
 
         _liveTimer?.Kill(); _liveTimer = null;
         _privateCheckTimer?.Kill();
