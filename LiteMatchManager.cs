@@ -33,7 +33,7 @@ public class LiteMatchConfig : BasePluginConfig
 {
     [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 2; 
     [JsonPropertyName("KickUnreadyPlayerTime")] public int KickUnreadyPlayerTime { get; set; } = 360;
-    [JsonPropertyName("ReconnectGracePeriod")] public int ReconnectGracePeriod { get; set; } = 180; // 新增：斷線保護秒數
+    [JsonPropertyName("ReconnectGracePeriod")] public int ReconnectGracePeriod { get; set; } = 180; 
     
     [JsonPropertyName("UnreadyReminderInterval")] public int UnreadyReminderInterval { get; set; } = 60;
     [JsonPropertyName("PublicUnreadyReminderInterval")] public int PublicUnreadyReminderInterval { get; set; } = 15;
@@ -105,9 +105,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.18_HudFix";
+    public override string ModuleVersion => "9.19_No1v1Hud";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "加入斷線重連保護與HUD顯示最佳化版";
+    public override string ModuleDescription => "1v1不顯示HUD，2v2才觸發HUD";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -132,7 +132,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
     
-    // 斷線計時器紀錄
     private Dictionary<ulong, CounterStrikeSharp.API.Modules.Timers.Timer?> _disconnectTimers = new();
 
     private bool _isMatchLive = false;
@@ -264,7 +263,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
-        // 斷線事件加入 3 分鐘保護機制
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
@@ -301,7 +299,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         });
 
-        // 隊伍變更事件加入重連阻斷計時器與手動觀戰防範
         RegisterEventHandler<EventPlayerTeam>((@event, info) =>
         {
             if (@event.Userid is { IsValid: true, Handle: not 0 } player)
@@ -644,15 +641,16 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         int targetPlayers = GetDynamicRequiredPlayers();
         int missingPlayers = targetPlayers - _readyPlayers.Count;
+        
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
         
-        string prepString = targetPlayers switch
+        // 只有 2v2 團戰 (目標人數大於 2) 時，才顯示中間的 HTML 準備框
+        if (targetPlayers > 2)
         {
-            <= 2 => $"{Config.HudHtml_Prep1v1_Line1}<br>{string.Format(Config.HudHtml_Prep1v1_Line2, _readyPlayers.Count, missingPlayers)}<br>",
-            _ => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
-        };
+            string prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
+            ShowHud(prepString, Config.HudDuration_Prep);
+        }
 
-        ShowHud(prepString, Config.HudDuration_Prep);
         CheckMatchStart();
 
         if (!_isMatchLive)
@@ -676,14 +674,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _playerUnreadyTime[steamId] = 0; 
             int targetPlayers = GetDynamicRequiredPlayers();
             int missingPlayers = targetPlayers - _readyPlayers.Count;
+            
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
             
-            string prepString = targetPlayers switch
+            // 只有 2v2 團戰 (目標人數大於 2) 時，才顯示中間的 HTML 準備框
+            if (targetPlayers > 2)
             {
-                <= 2 => $"{Config.HudHtml_Prep1v1_Line1}<br>{string.Format(Config.HudHtml_Prep1v1_Line2, _readyPlayers.Count, missingPlayers)}<br>",
-                _ => $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>"
-            };
-            ShowHud(prepString, Config.HudDuration_Prep);
+                string prepString = $"{Config.HudHtml_Prep2v2_Line1}<br>{string.Format(Config.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
+                ShowHud(prepString, Config.HudDuration_Prep);
+            }
         }
     }
 
@@ -951,7 +950,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
         
-        // 重置狀態時清除所有斷線保護計時器
         foreach (var timer in _disconnectTimers.Values) timer?.Kill();
         _disconnectTimers.Clear();
 
@@ -982,7 +980,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
 
-        // 【新增】：如果雙方都還是 0 分，直接跳過不顯示計分板 HUD，避免與開賽畫面重疊或產生空框
         if (scoreT == 0 && scoreCT == 0)
         {
             return HookResult.Continue;
