@@ -283,7 +283,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                     else
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}團 戰 玩 家 {ChatColors.Red}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位！");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 {ChatColors.Red}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位");
                         Server.NextFrame(CheckPhaseWin); 
                     }
                 }
@@ -324,7 +324,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         }
                         else
                         {
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}離 開 隊 伍，已 釋 出 補 位 名 額！");
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}離 開 隊 伍，已 釋 出 補 位 名 額");
                             Server.NextFrame(CheckPhaseWin);
                         }
                     }
@@ -345,7 +345,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             Server.NextFrame(() => {
                                 if (player.IsValid) {
                                     player.ChangeTeam(CsTeam.Spectator);
-                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，不 開 放 補 位");
+                                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，不 開 放 加 入");
                                 }
                             });
                         }
@@ -371,7 +371,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             else 
                             {
                                 _readyPlayers.Add(steamId);
-                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 成 功 補 位 加 入 團 戰 比 賽！");
+                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 成 功 補 位 加 入 團 戰 比 賽");
                             }
                         }
                     }
@@ -518,7 +518,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     if (_liveMatchTargetPlayers == 2)
                     {
-                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，嚴 禁 路 人 補 位 加 入");
+                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，嚴 禁 路 人 加 入");
                         return HookResult.Handled;
                     }
                     else
@@ -533,7 +533,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         
                         if (currentTeamCount >= liveTeamMax)
                         {
-                            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}補 位 失 敗！該 隊 伍 已 經 滿 員");
+                            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}加 入 失 敗！該 隊 伍 已 經 滿 員");
                             return HookResult.Handled;
                         }
                     }
