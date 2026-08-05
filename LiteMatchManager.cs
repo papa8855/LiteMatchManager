@@ -33,6 +33,7 @@ public class LiteMatchConfig : BasePluginConfig
 {
     [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 2; 
     [JsonPropertyName("KickUnreadyPlayerTime")] public int KickUnreadyPlayerTime { get; set; } = 360;
+    [JsonPropertyName("ReconnectGracePeriod")] public int ReconnectGracePeriod { get; set; } = 180; // 新增：斷線保護秒數
     
     [JsonPropertyName("UnreadyReminderInterval")] public int UnreadyReminderInterval { get; set; } = 60;
     [JsonPropertyName("PublicUnreadyReminderInterval")] public int PublicUnreadyReminderInterval { get; set; } = 15;
@@ -104,20 +105,18 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.16_Optimized_Performance_VisibleCommands";
+    public override string ModuleVersion => "9.17_ReconnectProtection";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "效能最佳化與對話顯示版";
+    public override string ModuleDescription => "加入斷線重連保護與效能最佳化版";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
     private int _currentPhaseIndex = 0; 
     
-    // 【效能優化】：在此宣告用於高速查表的 HashSet
     private HashSet<string> _readyCommandsSet = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _gunMenuCommandsSet = new(StringComparer.OrdinalIgnoreCase);
     
-    // 【效能優化】：手槍清單的靜態查表，替換 ReplaceWeapon 裡的字串比對
     private static readonly HashSet<string> PistolWeapons = new(StringComparer.OrdinalIgnoreCase)
     {
         "weapon_usp_silencer", "weapon_glock", "weapon_deagle", "weapon_revolver",
@@ -132,6 +131,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, string> _playerSecondary = new(64);
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
+    
+    // 【新增】：斷線計時器紀錄
+    private Dictionary<ulong, CounterStrikeSharp.API.Modules.Timers.Timer?> _disconnectTimers = new();
 
     private bool _isMatchLive = false;
     private bool _isChangingMap = false; 
@@ -149,7 +151,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
-    // 保留這個給 OnPlayerSpawn 和 TryGiveWeaponByCommand 裡數量極少的清單使用
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -188,7 +189,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // 【效能優化】：減少 Utilities.GetPlayers() 呼叫次數
     private void CheckPendingReminders()
     {
         if (_pendingInitialReminders.Count == 0) return;
@@ -231,7 +231,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
         config.WeaponCommands = caseInsensitiveDict;
 
-        // 【效能優化】：載入設定時直接生成高速查詢表
         _readyCommandsSet = new HashSet<string>(config.ReadyCommands, StringComparer.OrdinalIgnoreCase);
         _gunMenuCommandsSet = new HashSet<string>(config.GunMenuCommands, StringComparer.OrdinalIgnoreCase);
 
@@ -250,7 +249,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager (效能優化 + 顯示指令版) 啟動！");
+        Console.WriteLine("  LiteMatchManager (斷線重連保護版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -265,40 +264,73 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
 
+        // 【修改】：斷線事件加入 3 分鐘保護機制
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
             {
                 ulong steamId = player.SteamID;
-                _readyPlayers.Remove(steamId);
-                _playerUnreadyTime.Remove(steamId);
-                _playerPrimary.Remove(steamId);
-                _playerSecondary.Remove(steamId);
-                _pendingInitialReminders.Remove(steamId);
-                _hasReceivedInitialReminder.Remove(steamId);
+                string pName = player.PlayerName;
 
-                if (_isMatchLive) Server.NextFrame(CheckPhaseWin);
-                else Server.NextFrame(CheckMatchStart);
+                if (_isMatchLive && _readyPlayers.Contains(steamId))
+                {
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 {pName} 斷 線，保 留 參 賽 資 格 {Config.ReconnectGracePeriod} 秒！");
+                    
+                    _disconnectTimers[steamId] = AddTimer(Config.ReconnectGracePeriod, () => 
+                    {
+                        if (_isMatchLive && _readyPlayers.Contains(steamId))
+                        {
+                            _readyPlayers.Remove(steamId);
+                            _disconnectTimers.Remove(steamId);
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}玩 家 {pName} 逾 時 未 歸，比 賽 強 制 終 止！");
+                            AbortMatch();
+                        }
+                    });
+                }
+                else
+                {
+                    _readyPlayers.Remove(steamId);
+                    _playerUnreadyTime.Remove(steamId);
+                    _playerPrimary.Remove(steamId);
+                    _playerSecondary.Remove(steamId);
+                    _pendingInitialReminders.Remove(steamId);
+                    _hasReceivedInitialReminder.Remove(steamId);
+                    if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
+                }
             }
             return HookResult.Continue;
         });
 
+        // 【修改】：隊伍變更事件加入重連阻斷計時器與手動觀戰防範
         RegisterEventHandler<EventPlayerTeam>((@event, info) =>
         {
             if (@event.Userid is { IsValid: true, Handle: not 0 } player)
             {
                 ulong steamId = player.SteamID;
                 int newTeam = @event.Team; 
+
+                if (_disconnectTimers.TryGetValue(steamId, out var timer))
+                {
+                    timer?.Kill(); 
+                    _disconnectTimers.Remove(steamId);
+                    if (newTeam is 2 or 3)
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 已 重 連 回 到 比 賽！");
+                }
                 
                 if (newTeam is 0 or 1) 
                 {
                     _pendingInitialReminders.Remove(steamId);
                     _hasReceivedInitialReminder.Remove(steamId);
 
-                    if (_readyPlayers.Remove(steamId))
+                    if (_isMatchLive && _readyPlayers.Contains(steamId))
                     {
-                        if (!_isMatchLive) Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
-                        else Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 退 出 了 戰 鬥，移 至 觀 戰 ");
+                        _readyPlayers.Remove(steamId);
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}手 動 放 棄 比 賽，強 制 終 止！");
+                        Server.NextFrame(AbortMatch); 
+                    }
+                    else if (_readyPlayers.Remove(steamId))
+                    {
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
                     }
                     _playerUnreadyTime.Remove(steamId); 
                 }
@@ -514,10 +546,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (command == "nextmap" && AdminManager.PlayerHasPermissions(player, "@css/root"))
         {
-            TriggerMapChange(); return HookResult.Handled; // 管理員指令繼續隱藏
+            TriggerMapChange(); return HookResult.Handled; 
         }
 
-        // 【恢復顯示】：改回 Continue，這樣玩家打 !r 就會顯示在聊天室讓對手看到
         if (_readyCommandsSet.Contains(command))
         {
             if (!_isMatchLive) HandlePlayerReady(player);
@@ -531,7 +562,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (Config.EnableChatWeaponCommands)
         {
-            // 【恢復顯示】：改回 Continue，這樣玩家打 !ak 或 !gs 也會顯示出來
             if (_gunMenuCommandsSet.Contains(command))
             {
                 OnGsCommand(player); return HookResult.Continue;
@@ -543,7 +573,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
         
-        // 若輸入不認識的指令 (例如 !admin)，放行給其他插件處理
         return HookResult.Continue;
     }
 
@@ -781,7 +810,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return HookResult.Continue;
     }
 
-    // 【效能優化】：替換成光速判斷，免除了原本近 60 次的字串比對
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
         if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons is not { } weapons) return;
@@ -923,6 +951,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _hasReceivedInitialReminder.Clear();
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
+        
+        // 【新增】：重置狀態時清除所有斷線保護計時器
+        foreach (var timer in _disconnectTimers.Values) timer?.Kill();
+        _disconnectTimers.Clear();
 
         _liveTimer?.Kill(); _liveTimer = null;
         _privateCheckTimer?.Kill();
