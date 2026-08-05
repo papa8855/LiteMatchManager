@@ -185,7 +185,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _activeCenterMessage = "";
                 foreach (var p in Utilities.GetPlayers())
                 {
-                    if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml("&#8203;");
+                    if (p is { IsValid: true, IsBot: false }) p.PrintToCenterHtml("&#8203;", 0);
                 }
             }
         }
