@@ -95,7 +95,7 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_MatchAbort_Line2")] public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
     
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ {0} 戰 鬥 開 始 ★</font></b><br>";
-    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>{0}</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
+    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>３０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
     
     [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'><b>{0}回合：</b></font><font class='fontSize-l' color='gold'><b>模式 / 搶 </b></font><font class='fontSize-l' color='Green'><b>{1}</b></font><font class='fontSize-l' color='gold'><b> 勝</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
@@ -278,12 +278,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
                     if (_liveMatchTargetPlayers == 2)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}單 挑 玩 家 {pName} 斷 線，比 賽 強 制 終 止！");
+                        Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.White}斷 線，比 賽 強 制 終 止");
                         AbortMatch();
                     }
                     else
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 {ChatColors.Red}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位");
+                        Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位");
                         Server.NextFrame(CheckPhaseWin); 
                     }
                 }
@@ -319,18 +319,18 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         
                         if (_liveMatchTargetPlayers == 2)
                         {
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}放 棄 比 賽，強 制 終 止！");
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}放 棄 比 賽，強 制 終 止！");
                             Server.NextFrame(AbortMatch); 
                         }
                         else
                         {
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName} {ChatColors.Orange}離 開 隊 伍，已 釋 出 補 位 名 額");
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}離 開 隊 伍，已 釋 出 補 位 名 額");
                             Server.NextFrame(CheckPhaseWin);
                         }
                     }
                     else if (_readyPlayers.Remove(steamId))
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 取 準 備");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 取 準 備");
                     }
                     _playerUnreadyTime.Remove(steamId); 
                 }
@@ -371,7 +371,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             else 
                             {
                                 _readyPlayers.Add(steamId);
-                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Green}玩 家 {player.PlayerName} 成 功 補 位 加 入 團 戰 比 賽");
+                                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 入 團 戰 比 賽");
                             }
                         }
                     }
@@ -472,7 +472,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 var nextPhase = Config.MatchModes[_currentPhaseIndex];
                 
                 // 全服廣播換階段
-                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【{ChatColors.Green}{nextPhase.Name}{ChatColors.Gold}】模 式！");
+                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}階 段 結 束！{ChatColors.Gold}進 入【{ChatColors.Green}{nextPhase.Name}{ChatColors.Gold}】模 式");
                 
                 // 顯示階段切換提示
                 string transitionHud = $"<font class='fontSize-l' color='lime'><b>✦ 階 段 切 換 ✦</b></font><br><font class='fontSize-l' color='white'><b>進 入：</font><font class='fontSize-l' color='gold'><b>【{nextPhase.Name}】</b><font class='fontSize-l' color='white'>模式</b></font>";
@@ -510,7 +510,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             {
                 if (_readyPlayers.Contains(player.SteamID) && player.TeamNum >= 2)
                 {
-                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}對 戰 進 行 中，無 法 切 換 隊 伍！");
+                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}對 戰 進 行 中，無 法 切 換 隊 伍");
                     return HookResult.Handled;
                 }
 
@@ -636,7 +636,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (!isPrimary && !isSecondary)
         {
-            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器！");
+            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【{phase.Name}】{ChatColors.White} 模式，禁 止 使 用 該 武 器");
             return;
         }
 
@@ -672,7 +672,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int winnerScore = Math.Max(scoreT, scoreCT);
         int loserScore = Math.Min(scoreT, scoreCT);
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({winnerScore} : {loserScore}) {ChatColors.Gold}贏得了最終勝利！");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green}({winnerScore} : {loserScore}) {ChatColors.Gold}贏得了最終勝利");
         TriggerMapChange();
     }
 
@@ -940,8 +940,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (totalPlayers > 0 && totalPlayers == _readyPlayers.Count)
         {
             string modeHint = totalPlayers == 1 
-                ? $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}1 {ChatColors.White}人，等 待 對 手 加 入..."
-                : $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}{totalPlayers} {ChatColors.White}人，等 對 手 加 入 {ChatColors.Green}{GetDynamicRequiredPlayers() / 2} v {GetDynamicRequiredPlayers() / 2} {ChatColors.White}團 戰";
+                ? $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}1 {ChatColors.White}人，等 待 對 手 加 入..."
+                : $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}場 上 {ChatColors.Green}{totalPlayers} {ChatColors.White}人，等 對 手 加 入 {ChatColors.Green}{GetDynamicRequiredPlayers() / 2} v {GetDynamicRequiredPlayers() / 2} {ChatColors.White}團 戰";
             Server.PrintToChatAll(modeHint);
         }
     }
@@ -971,8 +971,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 int teamSize = targetPlayers / 2;
                 
                 string modeHint = totalPlayers switch {
-                    2 => $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 入 {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
-                    > 2 => $" [ {ChatColors.Green}動 態 判 斷{ChatColors.White} ] {ChatColors.White}已觸發團戰，需滿 {ChatColors.Green}{targetPlayers} {ChatColors.White}人輸入 {ChatColors.Orange}!R {ChatColors.White}可開始 {ChatColors.Green}{teamSize} v {teamSize} 團戰{ChatColors.White}",
+                    2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 入 {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
+                    > 2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}已觸發團戰，需滿 {ChatColors.Green}{targetPlayers} {ChatColors.White}人輸入 {ChatColors.Orange}!R {ChatColors.White}可開始 {ChatColors.Green}{teamSize} v {teamSize} 團戰{ChatColors.White}",
                     _ => ""
                 };
                 
