@@ -64,8 +64,8 @@ public class LiteMatchConfig : BasePluginConfig
     // ★ 新增：自定義武器選單提示文字 (可自由增減行數與修改顏色)
     [JsonPropertyName("Duel_GunMenuMessage")] 
     public List<string> GunMenuMessage { get; set; } = [
-        " {Orange}在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
-        " ---------------------------------------------------------------",
+        " {Orange}您 可 在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
+        " -------------------------------------------------------------------",
         " [ {LightBlue}手槍{White} ]  {LightBlue}!dg {White}[ 沙鷹 ] 、{LightBlue}!usp {White}[ USP ] 、{LightBlue}!gk {White}[ 格洛克 ] 、{LightBlue}!r8 {White}[ R8 ]",
         " [ {Orange}狙擊{White} ] {Orange}!ssg {White}[ SSG 08 鳥狙 ] 、{Orange}!awp {White}[ AWP狙擊步槍 ]",
         " [ {Green}步槍{White} ] {Green}!gr {White}[ Galil ] 、{Green}!ak {White}[ AK47 ] 、{Green}!a1 {White}[ M4A1 ] 、{Green}!a4 {White}[ M4A4 ]"
