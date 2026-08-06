@@ -652,7 +652,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         
                         if (currentTeamCount >= liveTeamMax)
                         {
-                            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}加 入 失 敗！該 隊 伍 已 經 滿 員");
+                            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}加 入 失 敗！該 隊 伍 已 經 滿 員");
                             return HookResult.Handled;
                         }
                     }
@@ -786,7 +786,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void HandlePlayerReady(CCSPlayerController player)
     {
-        if (player.TeamNum is 0 or 1) { player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}您 無 法 從 旁 觀 者 模 式 加 入 對 戰"); return; }
+        if (player.TeamNum is 0 or 1) { player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 旁 觀 者 模 式 加 入 對 戰"); return; }
         ulong steamId = player.SteamID;
         if (!_readyPlayers.Add(steamId)) { player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); return; }
 
@@ -796,7 +796,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int targetPlayers = GetDynamicRequiredPlayers();
         int missingPlayers = targetPlayers - _readyPlayers.Count;
         
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
         
         if (targetPlayers > 2)
         {
@@ -828,7 +828,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             int targetPlayers = GetDynamicRequiredPlayers();
             int missingPlayers = targetPlayers - _readyPlayers.Count;
             
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
             
             if (targetPlayers > 2)
             {
@@ -874,7 +874,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, modeText)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
-            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
+            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 開 始");
 
             if (activeT >= 2 && activeCT >= 2)
             {
@@ -915,7 +915,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 Server.NextFrame(() => {
                     if (player.IsValid) {
                         player.ChangeTeam(CsTeam.Spectator);
-                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}比 賽 已 開 始，非 參 賽 者 無 法 加 入");
+                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}比 賽 已 開 始，非 參 賽 者 無 法 加 入");
                     }
                 });
                 return HookResult.Continue; 
