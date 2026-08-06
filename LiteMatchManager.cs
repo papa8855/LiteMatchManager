@@ -878,7 +878,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
             if (activeT >= 2 && activeCT >= 2)
             {
-                Console.WriteLine("[2V2團戰]比賽開始");
+                Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
             }
             
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
