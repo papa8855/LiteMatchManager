@@ -153,6 +153,18 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
+    // 【新增 - 第 3 點優化】統一尋找隊伍實體的快取方法，降低引擎負載
+    private void EnsureTeamEntitiesCached()
+    {
+        if (_cachedTeamT is { IsValid: true } && _cachedTeamCT is { IsValid: true }) return;
+
+        foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
+        {
+            if (team.TeamNum == 2) _cachedTeamT = team;
+            else if (team.TeamNum == 3) _cachedTeamCT = team;
+        }
+    }
+
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -169,6 +181,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _centerMessageExpiration = Server.CurrentTime + duration;
     }
 
+    // 第 1 點：OnTick (暫時保留原樣)
     private void OnTick()
     {
         if (!string.IsNullOrEmpty(_activeCenterMessage))
@@ -193,6 +206,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // 【優化 - 第 2 點】將雙層迴圈改為單次遍歷
     private void CheckPendingReminders()
     {
         if (_pendingInitialReminders.Count == 0) return;
@@ -200,33 +214,45 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         float currentTime = Server.CurrentTime;
         List<ulong>? toRemove = null;
 
-        var allPlayers = Utilities.GetPlayers();
-
-        foreach (var kvp in _pendingInitialReminders)
+        // 單次遍歷：只呼叫一次 GetPlayers() 就能精準找到需要提醒的人
+        foreach (var p in Utilities.GetPlayers())
         {
-            if (currentTime >= kvp.Value)
+            if (p is { IsValid: true, SteamID: > 0, TeamNum: 2 or 3 })
             {
-                ulong steamId = kvp.Key;
-                toRemove ??= []; 
-                toRemove.Add(steamId);
-
-                if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                ulong steamId = p.SteamID;
+                if (_pendingInitialReminders.TryGetValue(steamId, out float triggerTime))
                 {
-                    foreach (var p in allPlayers)
+                    if (currentTime >= triggerTime)
                     {
-                        if (p is { IsValid: true, SteamID: var id, TeamNum: 2 or 3 } && id == steamId)
+                        toRemove ??= [];
+                        toRemove.Add(steamId);
+
+                        if (!_isMatchLive && !_readyPlayers.Contains(steamId))
                         {
                             _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                             int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
                             p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                            break;
                         }
                     }
                 }
             }
         }
 
-        if (toRemove is not null) foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
+        // 安全機制：檢查是否有已經斷線但時間到期的垃圾資料需要清理
+        foreach (var kvp in _pendingInitialReminders)
+        {
+            if (currentTime >= kvp.Value)
+            {
+                toRemove ??= [];
+                if (!toRemove.Contains(kvp.Key)) toRemove.Add(kvp.Key);
+            }
+        }
+
+        // 統一清理已提醒或已過期的 SteamID
+        if (toRemove is not null) 
+        {
+            foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
+        }
     }
 
     public void OnConfigParsed(LiteMatchConfig config)
@@ -430,6 +456,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return target > absoluteMax ? absoluteMax : target;
     }
 
+    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private void CheckPhaseWin()
     {
         if (_isServerShuttingDown || !_isMatchLive || _isChangingMap) return; 
@@ -447,14 +474,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return;
 
-        if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
-        {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-            {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                else if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
+        EnsureTeamEntitiesCached();
 
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
@@ -482,21 +502,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // ★ 最終賽局結束：依賴伺服器底層的 30 勝來觸發
+    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private HookResult OnMatchEnd(EventCsWinPanelMatch @event, GameEventInfo info)
     {
         if (!_isMatchLive || _isChangingMap) return HookResult.Continue;
 
         int scoreT = 0, scoreCT = 0;
 
-        if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
-        {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-            {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                else if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
+        EnsureTeamEntitiesCached();
 
         if (_cachedTeamT != null) scoreT = _cachedTeamT.Score;
         if (_cachedTeamCT != null) scoreCT = _cachedTeamCT.Score;
@@ -1052,18 +1065,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _waitingTimer = AddTimer(Config.WaitingForOpponentInterval, BroadcastWaitingMessage, TimerFlags.REPEAT);
     }
 
+    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive || Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return HookResult.Continue;
         
-        if (_cachedTeamT is not { IsValid: true } || _cachedTeamCT is not { IsValid: true })
-        {
-            foreach (var team in Utilities.FindAllEntitiesByDesignerName<CCSTeam>("cs_team_manager"))
-            {
-                if (team.TeamNum == 2) _cachedTeamT = team;
-                else if (team.TeamNum == 3) _cachedTeamCT = team;
-            }
-        }
+        EnsureTeamEntitiesCached();
 
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
