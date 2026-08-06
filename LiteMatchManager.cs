@@ -122,7 +122,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
-    private List<string> _cachedGunMenuMessage = new(); // ★ 用來存放解析完顏色的武器選單訊息
+    private List<string> _cachedGunMenuMessage = new(); 
     
     private int _currentPhaseIndex = 0; 
     private int _phaseStartScoreT = 0;
@@ -164,7 +164,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
-    // ★ 統整顏色替換邏輯的 Helper 方法 (方便 Prefix 和 GunMenu 共用)
     private string ReplaceColorTags(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
@@ -192,7 +191,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         Config = config;
         
-        // ★ 載入時一次性替換所有顏色標籤，省下遊戲中的運算效能
         _cachedPrefix = ReplaceColorTags(config.ChatPrefix);
         
         _cachedGunMenuMessage.Clear();
@@ -844,6 +842,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _phaseStartScoreT = 0;
             _phaseStartScoreCT = 0;
             
+            // ★ 新增：開賽瞬間強制清除記憶，確保手槍局大家拿預設手槍
+            _playerPrimary.Clear();
+            _playerSecondary.Clear();
+            
             string modeText = totalPlayers == 2 ? "1 v 1 " : $"{activeT} v {activeCT} ";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
@@ -975,7 +977,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         player.GiveNamedItem(newWeapon);
     }
 
-    // ★ 變乾淨了！現在它只負責把設定檔裡的文字印出來
     private void OnGsCommand(CCSPlayerController player)
     {
         foreach (var line in _cachedGunMenuMessage)
@@ -1079,6 +1080,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveMatchTargetPlayers = 0; 
         _readyPlayers.Clear();
         _playerUnreadyTime.Clear();
+        
+        // ★ 新增：重置對戰狀態時，一併清除所有玩家的武器記憶，確保下一場從零開始
+        _playerPrimary.Clear();
+        _playerSecondary.Clear();
+
         _pendingInitialReminders.Clear();
         _hasReceivedInitialReminder.Clear();
         _activeCenterMessage = "";
