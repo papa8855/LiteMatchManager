@@ -735,7 +735,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (!isPrimary && !isSecondary)
         {
-            player.PrintToChat($" {_cachedPrefix} 當前為 {ChatColors.Gold}【 {phase.Name} 】{ChatColors.White} 模式，禁 止 使 用 該 武 器");
+            player.PrintToChat($" {_cachedPrefix} 當 前 為 【 {ChatColors.Gold}{phase.Name}{ChatColors.White} 】 模 式，禁 止 使 用 該 武 器");
             return;
         }
 
@@ -755,7 +755,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string mapName = parts[0];
         string workshopId = parts.Length > 1 ? parts[1] : "";
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{Config.MapChangeDelay} 秒後 {ChatColors.Gold}自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{Config.MapChangeDelay} 秒{ChatColors.White}{ChatColors.Gold}後 自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
 
         AddTimer(Config.MapChangeDelay, () =>
         {
