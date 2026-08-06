@@ -9,6 +9,7 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
+using System.Linq;
 
 namespace LiteMatchManager;
 
@@ -32,6 +33,10 @@ public class DuelModeConfig
 public class LiteMatchConfig : BasePluginConfig
 {
     [JsonPropertyName("MaxPlayersPerTeam")] public int MaxPlayersPerTeam { get; set; } = 2; 
+    
+    // ★ 新增：最終勝利條件，達到此分數將無視中途離線並強制進行換圖流程
+    [JsonPropertyName("FinalMatchWinScore")] public int FinalMatchWinScore { get; set; } = 30; 
+    
     [JsonPropertyName("KickUnreadyPlayerTime")] public int KickUnreadyPlayerTime { get; set; } = 360;
     [JsonPropertyName("ReconnectGracePeriod")] public int ReconnectGracePeriod { get; set; } = 180;
     
@@ -61,7 +66,6 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("Duel_GunMenuCommands")] 
     public List<string> GunMenuCommands { get; set; } = ["gs", "GS"];
     
-    // ★ 新增：自定義武器選單提示文字 (可自由增減行數與修改顏色)
     [JsonPropertyName("Duel_GunMenuMessage")] 
     public List<string> GunMenuMessage { get; set; } = [
         " {Orange}您 可 在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
@@ -214,6 +218,22 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // ★ 新增：檢查比賽是否已經達到最終勝利條件 (防止勝利面板空窗期逃跑)
+    private bool IsMatchOver()
+    {
+        if (_isChangingMap) return true;
+        
+        EnsureTeamEntitiesCached();
+        int scoreT = _cachedTeamT?.Score ?? 0;
+        int scoreCT = _cachedTeamCT?.Score ?? 0;
+        
+        // 只要任一隊分數達到 30 勝 (或設定檔中的目標)，即代表比賽已結束，進入無敵狀態
+        if (scoreT >= Config.FinalMatchWinScore || scoreCT >= Config.FinalMatchWinScore)
+            return true;
+            
+        return false;
+    }
+
     private void RefreshActivePlayers()
     {
         _serverPlayersCache.Clear();
@@ -338,7 +358,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     _readyPlayers.Remove(steamId);
 
-                    if (_isChangingMap) return HookResult.Continue;
+                    // ★ 修正：若是比賽已經達到 30 勝（準備彈勝利面板或換圖中），直接無視玩家中離！
+                    if (IsMatchOver()) return HookResult.Continue;
 
                     if (_liveMatchTargetPlayers == 2)
                     {
@@ -382,7 +403,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         _readyPlayers.Remove(steamId);
                         
-                        if (_isChangingMap) return HookResult.Continue;
+                        // ★ 修正：分數已滿，無視換隊干擾
+                        if (IsMatchOver()) return HookResult.Continue;
                         
                         if (_liveMatchTargetPlayers == 2)
                         {
@@ -397,7 +419,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                     else if (_readyPlayers.Remove(steamId))
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 取 準 備");
                     }
                     _playerUnreadyTime.Remove(steamId); 
                 }
@@ -495,7 +517,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void CheckPhaseWin()
     {
-        if (_isServerShuttingDown || !_isMatchLive || _isChangingMap) return; 
+        // ★ 修正：檢查是否已達 30 勝，若達標則封鎖階段結算防干擾
+        if (_isServerShuttingDown || !_isMatchLive || IsMatchOver()) return; 
         
         int activeT = 0, activeCT = 0;
         foreach (var p in Utilities.GetPlayers())
@@ -571,31 +594,30 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return HookResult.Continue;
     }
 
-   private void AbortMatch()
-{
-    if (!_isMatchLive || _isChangingMap) return;
-    
-    _liveTimer?.Kill(); _liveTimer = null;
-
-    // 1. 先重置對戰狀態 (這會清空舊的 HUD 讓畫面乾淨)
-    ResetMatchState();
-    
-    // 2. 顯示終止 HUD 與聊天室提示
-    ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
-    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}玩 家 {ChatColors.Orange}離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
-
-    // 3. 啟動計時器：等待 HUD 的秒數 (例如 5 秒) 播完後，才執行切換暖身的指令
-    AddTimer(Config.HudDuration_MatchAbort, () =>
+    private void AbortMatch()
     {
-        Server.ExecuteCommand("mp_warmup_start");
+        // ★ 修正：若分數已達 30，直接強制封鎖退回暖身的操作
+        if (!_isMatchLive || IsMatchOver()) return;
         
-        var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
-        if (pauseConVar is not null) pauseConVar.SetValue(1);
-        else Server.ExecuteCommand("mp_warmup_pausetimer 1");
+        _liveTimer?.Kill(); _liveTimer = null;
+
+        ResetMatchState();
         
-        Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
-    });
-}
+        ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}玩 家 {ChatColors.Orange}離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+
+        AddTimer(Config.HudDuration_MatchAbort, () =>
+        {
+            Server.ExecuteCommand("mp_warmup_start");
+            
+            var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
+            if (pauseConVar is not null) pauseConVar.SetValue(1);
+            else Server.ExecuteCommand("mp_warmup_pausetimer 1");
+            
+            Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
+        });
+    }
+
     private HookResult OnJoinTeam(CCSPlayerController? player, CommandInfo info)
     {
         if (player is not { IsValid: true }) return HookResult.Continue;
@@ -842,7 +864,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _phaseStartScoreT = 0;
             _phaseStartScoreCT = 0;
             
-            // ★ 新增：開賽瞬間強制清除記憶，確保手槍局大家拿預設手槍
             _playerPrimary.Clear();
             _playerSecondary.Clear();
             
@@ -1081,7 +1102,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _readyPlayers.Clear();
         _playerUnreadyTime.Clear();
         
-        // ★ 新增：重置對戰狀態時，一併清除所有玩家的武器記憶，確保下一場從零開始
         _playerPrimary.Clear();
         _playerSecondary.Clear();
 
