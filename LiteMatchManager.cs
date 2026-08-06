@@ -582,7 +582,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     
     // 2. 顯示終止 HUD 與聊天室提示
     ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
-    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}玩 家 {ChatColors.Orange}離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
 
     // 3. 啟動計時器：等待 HUD 的秒數 (例如 5 秒) 播完後，才執行切換暖身的指令
     AddTimer(Config.HudDuration_MatchAbort, () =>
@@ -753,7 +753,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string mapName = parts[0];
         string workshopId = parts.Length > 1 ? parts[1] : "";
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{Config.MapChangeDelay} 秒{ChatColors.White}{ChatColors.Gold}後 自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}5 秒{ChatColors.White} {ChatColors.Gold}後 自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
 
         AddTimer(Config.MapChangeDelay, () =>
         {
