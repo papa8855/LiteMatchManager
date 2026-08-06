@@ -106,9 +106,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.26_NativeMatchEnd_Final";
+    public override string ModuleVersion => "9.26_NativeMatchEnd_Final_Optimized";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 + 階段無縫HUD歸零";
+    public override string ModuleDescription => "原生30勝換圖 + 階段無縫HUD歸零 + 效能極致優化";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -136,6 +136,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, string> _playerSecondary = new(64);
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
+
+    // 【新增 - 第 1 點優化】專門用來收看 HUD 的玩家點名板
+    private List<CCSPlayerController> _hudPlayers = new(64);
 
     private bool _isMatchLive = false;
     private bool _isChangingMap = false; 
@@ -165,6 +168,19 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // 【新增 - 第 1 點優化】更新點名板的專用方法
+    private void RefreshActivePlayers()
+    {
+        _hudPlayers.Clear();
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 })
+            {
+                _hudPlayers.Add(p);
+            }
+        }
+    }
+
     private bool IsStringInList(List<string> list, string target)
     {
         foreach (var item in list)
@@ -181,26 +197,25 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _centerMessageExpiration = Server.CurrentTime + duration;
     }
 
-    // 第 1 點：OnTick (暫時保留原樣)
+    // 【優化 - 第 1 點】OnTick 完美版：不再製造任何記憶體垃圾
     private void OnTick()
     {
         if (!string.IsNullOrEmpty(_activeCenterMessage))
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
-                foreach (var p in Utilities.GetPlayers())
+                // 直接向點名板上的玩家發送，速度最快、0 垃圾負擔
+                foreach (var p in _hudPlayers)
                 {
-                    // 已經加入 TeamNum: 2 or 3 的判斷，不發給觀察者
-                    if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
+                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
                 }
             }
             else
             {
                 _activeCenterMessage = "";
-                foreach (var p in Utilities.GetPlayers())
+                foreach (var p in _hudPlayers)
                 {
-                    // 已經加入 TeamNum: 2 or 3 的判斷，不發給觀察者
-                    if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
+                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
                 }
             }
         }
@@ -329,6 +344,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
                 }
             }
+            // 【第 1 點優化綁定】玩家斷線時，通知下一幀更新名單
+            Server.NextFrame(RefreshActivePlayers);
             return HookResult.Continue;
         });
 
@@ -411,6 +428,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     Server.NextFrame(CheckPhaseWin);
                 }
             }
+            // 【第 1 點優化綁定】玩家換隊伍時，通知下一幀更新名單
+            Server.NextFrame(RefreshActivePlayers);
             return HookResult.Continue;
         }, HookMode.Post);
 
@@ -434,7 +453,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             ResetMatchState();
             Console.WriteLine($"[LiteMatch] 地圖載入完成！執行暖身：{Config.WarmupConfigName}");
             Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
+            
+            // 【第 1 點優化綁定】換地圖時刷新名單
+            Server.NextFrame(RefreshActivePlayers);
         });
+
+        // 確保熱重載 (Hot Reload) 時能立刻建立名單
+        Server.NextFrame(RefreshActivePlayers);
     }
 
     private int GetDynamicRequiredPlayers()
@@ -810,7 +835,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
-            // ★ 核心修改：將原先的 phaseName 改為帶入 modeText ★
             string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, modeText)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
             ShowHud(hudStartText, Config.HudDuration_MatchStart);
             
@@ -1026,7 +1050,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 int teamSize = targetPlayers / 2;
                 
                 string modeHint = totalPlayers switch {
-                    2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 入 {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
+                    2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 মিলিটারি {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
                     > 2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}已觸發團戰，需滿 {ChatColors.Green}{targetPlayers} {ChatColors.White}人輸入 {ChatColors.Orange}!R {ChatColors.White}可開始 {ChatColors.Green}{teamSize} v {teamSize} 團戰{ChatColors.White}",
                     _ => ""
                 };
