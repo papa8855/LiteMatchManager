@@ -573,24 +573,31 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return HookResult.Continue;
     }
 
-    private void AbortMatch()
-    {
-        if (!_isMatchLive || _isChangingMap) return;
-        
-        _liveTimer?.Kill(); _liveTimer = null;
-        ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
+   private void AbortMatch()
+{
+    if (!_isMatchLive || _isChangingMap) return;
+    
+    _liveTimer?.Kill(); _liveTimer = null;
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+    // 1. 先重置對戰狀態 (這會清空舊的 HUD 讓畫面乾淨)
+    ResetMatchState();
+    
+    // 2. 顯示終止 HUD 與聊天室提示
+    ShowHud($"{Config.HudHtml_MatchAbort_Line1}<br>{Config.HudHtml_MatchAbort_Line2}<br>", Config.HudDuration_MatchAbort);
+    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}玩 家 離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
+
+    // 3. 啟動計時器：等待 HUD 的秒數 (例如 5 秒) 播完後，才執行切換暖身的指令
+    AddTimer(Config.HudDuration_MatchAbort, () =>
+    {
         Server.ExecuteCommand("mp_warmup_start");
         
         var pauseConVar = ConVar.Find("mp_warmup_pausetimer");
         if (pauseConVar is not null) pauseConVar.SetValue(1);
         else Server.ExecuteCommand("mp_warmup_pausetimer 1");
         
-        ResetMatchState();
         Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
-    }
-
+    });
+}
     private HookResult OnJoinTeam(CCSPlayerController? player, CommandInfo info)
     {
         if (player is not { IsValid: true }) return HookResult.Continue;
