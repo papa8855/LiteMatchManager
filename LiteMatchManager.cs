@@ -61,6 +61,16 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("Duel_GunMenuCommands")] 
     public List<string> GunMenuCommands { get; set; } = ["gs", "GS"];
     
+    // ★ 新增：自定義武器選單提示文字 (可自由增減行數與修改顏色)
+    [JsonPropertyName("Duel_GunMenuMessage")] 
+    public List<string> GunMenuMessage { get; set; } = [
+        " {Orange}在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
+        " ---------------------------------------------------------------",
+        " [ {LightBlue}手槍{White} ]  {LightBlue}!dg {White}[ 沙鷹 ] 、{LightBlue}!usp {White}[ USP ] 、{LightBlue}!gk {White}[ 格洛克 ] 、{LightBlue}!r8 {White}[ R8 ]",
+        " [ {Orange}狙擊{White} ] {Orange}!ssg {White}[ SSG 08 鳥狙 ] 、{Orange}!awp {White}[ AWP狙擊步槍 ]",
+        " [ {Green}步槍{White} ] {Green}!gr {White}[ Galil ] 、{Green}!ak {White}[ AK47 ] 、{Green}!a1 {White}[ M4A1 ] 、{Green}!a4 {White}[ M4A4 ]"
+    ];
+    
     [JsonPropertyName("Duel_ReadyCommands")] 
     public List<string> ReadyCommands { get; set; } = ["r", "ready", "start", "join", "duel"];
 
@@ -105,15 +115,16 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.27_ZeroGC_NoBlackHole_Final";
+    public override string ModuleVersion => "9.28_FullyConfigurable_Final";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 + 無縫HUD歸零 + 0記憶體垃圾極致版";
+    public override string ModuleDescription => "原生30勝換圖 + 0記憶體垃圾極致版 + 訊息全設定檔化";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
-    private int _currentPhaseIndex = 0; 
+    private List<string> _cachedGunMenuMessage = new(); // ★ 用來存放解析完顏色的武器選單訊息
     
+    private int _currentPhaseIndex = 0; 
     private int _phaseStartScoreT = 0;
     private int _phaseStartScoreCT = 0;
     
@@ -135,7 +146,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
 
-    // ★ 終極優化：全伺服器共用的玩家點名板（取代所有定時器裡的 Utilities.GetPlayers()）
     private List<CCSPlayerController> _serverPlayersCache = new(64);
 
     private bool _isMatchLive = false;
@@ -154,6 +164,47 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
+    // ★ 統整顏色替換邏輯的 Helper 方法 (方便 Prefix 和 GunMenu 共用)
+    private string ReplaceColorTags(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        return input
+            .Replace("{Default}", ChatColors.Default.ToString())
+            .Replace("{White}", ChatColors.White.ToString())
+            .Replace("{Red}", ChatColors.Red.ToString())
+            .Replace("{Green}", ChatColors.Green.ToString())
+            .Replace("{Lime}", ChatColors.Lime.ToString())
+            .Replace("{LightBlue}", ChatColors.LightBlue.ToString())
+            .Replace("{Yellow}", ChatColors.Yellow.ToString())
+            .Replace("{Gold}", ChatColors.Gold.ToString())
+            .Replace("{Orange}", ChatColors.Orange.ToString())
+            .Replace("{Grey}", ChatColors.Grey.ToString());
+    }
+
+    public void OnConfigParsed(LiteMatchConfig config)
+    {
+        var caseInsensitiveDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
+        config.WeaponCommands = caseInsensitiveDict;
+
+        _readyCommandsSet = new HashSet<string>(config.ReadyCommands, StringComparer.OrdinalIgnoreCase);
+        _gunMenuCommandsSet = new HashSet<string>(config.GunMenuCommands, StringComparer.OrdinalIgnoreCase);
+
+        Config = config;
+        
+        // ★ 載入時一次性替換所有顏色標籤，省下遊戲中的運算效能
+        _cachedPrefix = ReplaceColorTags(config.ChatPrefix);
+        
+        _cachedGunMenuMessage.Clear();
+        if (config.GunMenuMessage != null)
+        {
+            foreach (var line in config.GunMenuMessage)
+            {
+                _cachedGunMenuMessage.Add(ReplaceColorTags(line));
+            }
+        }
+    }
+
     private void EnsureTeamEntitiesCached()
     {
         if (_cachedTeamT is { IsValid: true } && _cachedTeamCT is { IsValid: true }) return;
@@ -165,7 +216,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // ★ 刷新全域快取的方法：只在事件觸發時更新
     private void RefreshActivePlayers()
     {
         _serverPlayersCache.Clear();
@@ -200,7 +250,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
-                // ★ 使用全域快取
                 foreach (var p in _serverPlayersCache)
                 {
                     if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
@@ -224,7 +273,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         float currentTime = Server.CurrentTime;
         List<ulong>? toRemove = null;
 
-        // ★ 使用全域快取，單次遍歷
         foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, SteamID: > 0, TeamNum: 2 or 3 })
@@ -263,31 +311,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    public void OnConfigParsed(LiteMatchConfig config)
-    {
-        var caseInsensitiveDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
-        config.WeaponCommands = caseInsensitiveDict;
-
-        _readyCommandsSet = new HashSet<string>(config.ReadyCommands, StringComparer.OrdinalIgnoreCase);
-        _gunMenuCommandsSet = new HashSet<string>(config.GunMenuCommands, StringComparer.OrdinalIgnoreCase);
-
-        Config = config;
-        _cachedPrefix = config.ChatPrefix
-            .Replace("{White}", ChatColors.White.ToString())
-            .Replace("{Red}", ChatColors.Red.ToString())
-            .Replace("{Green}", ChatColors.Green.ToString())
-            .Replace("{Lime}", ChatColors.Lime.ToString())
-            .Replace("{LightBlue}", ChatColors.LightBlue.ToString())
-            .Replace("{Yellow}", ChatColors.Yellow.ToString())
-            .Replace("{Gold}", ChatColors.Gold.ToString())
-            .Replace("{Orange}", ChatColors.Orange.ToString());
-    }
-
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager (極致優化：0 GC + 黑洞拔除版) 啟動！");
+        Console.WriteLine("  LiteMatchManager (全自訂義訊息 + 極致優化版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -452,7 +479,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private int GetDynamicRequiredPlayers()
     {
         int activeT = 0, activeCT = 0;
-        // 動態事件與狀態計算保持 GetPlayers 確保 0 延遲的準確性
         foreach (var p in Utilities.GetPlayers())
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false })
@@ -942,16 +968,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         player.GiveNamedItem(newWeapon);
     }
 
+    // ★ 變乾淨了！現在它只負責把設定檔裡的文字印出來
     private void OnGsCommand(CCSPlayerController player)
     {
-        player.PrintToChat($" {ChatColors.Orange} 您 可 在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器");
-        player.PrintToChat($" -------------------------------------------------------------------");
-        player.PrintToChat($" [ {ChatColors.LightBlue}手槍{ChatColors.White} ]  {ChatColors.LightBlue}!dg {ChatColors.White}[ 沙鷹 ] 、{ChatColors.LightBlue}!usp {ChatColors.White}[ USP ] 、{ChatColors.LightBlue}!gk {ChatColors.White}[ 格洛克 ] 、{ChatColors.LightBlue}!r8 {ChatColors.White}[ R8 ]");
-        player.PrintToChat($" [ {ChatColors.Orange}狙擊{ChatColors.White} ] {ChatColors.Orange}!ssg {ChatColors.White}[ SSG 08 鳥狙 ] 、{ChatColors.Orange}!awp {ChatColors.White}[ AWP狙擊步槍 ]");
-        player.PrintToChat($" [ {ChatColors.Green}步槍{ChatColors.White} ] {ChatColors.Green}!gr {ChatColors.White}[ Galil ] 、{ChatColors.Green}!ak {ChatColors.White}[ AK47 ] 、{ChatColors.Green}!a1 {ChatColors.White}[ M4A1 ] 、{ChatColors.Green}!a4 {ChatColors.White}[ M4A4 ]");
+        foreach (var line in _cachedGunMenuMessage)
+        {
+            player.PrintToChat(line);
+        }
     }
 
-    // ★ 拔除黑洞，並改用全域快取
     private void CheckAndWarnUnreadyPlayers()
     {
         if (_isMatchLive) return; 
@@ -983,7 +1008,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // ★ 使用全域快取
     private void BroadcastWaitingMessage()
     {
         if (_isMatchLive) return;
@@ -1003,7 +1027,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // ★ 拔除黑洞，並改用全域快取
     private void BroadcastUnreadyPlayers()
     {
         if (_isMatchLive) return; 
