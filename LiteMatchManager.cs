@@ -77,7 +77,6 @@ public class LiteMatchConfig : BasePluginConfig
     public List<DuelModeConfig> MatchModes { get; set; } = [
         new DuelModeConfig { Name = "手槍", WinLimit = 5, DisplayTarget = "５", Armor = 1, SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
         new DuelModeConfig { Name = "狙擊", WinLimit = 7, DisplayTarget = "７", Armor = 2, PrimaryWeapons = ["weapon_awp", "weapon_ssg08"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] },
-        // ★ 步槍階段的 WinLimit 請在 json 設大於 30 的數字 (如 99)
         new DuelModeConfig { Name = "步槍", WinLimit = 99, DisplayTarget = "回合３０", Armor = 2, PrimaryWeapons = ["weapon_ak47", "weapon_m4a1", "weapon_galilar", "weapon_m4a1_silencer"], SecondaryWeapons = ["weapon_usp_silencer", "weapon_deagle", "weapon_revolver", "weapon_glock"] }
     ];
 
@@ -106,16 +105,15 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.26_NativeMatchEnd_Final_Optimized";
+    public override string ModuleVersion => "9.27_ZeroGC_NoBlackHole_Final";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 + 階段無縫HUD歸零 + 效能極致優化";
+    public override string ModuleDescription => "原生30勝換圖 + 無縫HUD歸零 + 0記憶體垃圾極致版";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
     private int _currentPhaseIndex = 0; 
     
-    // ★ 無縫歸零核心：用來記錄每個階段開始時的底層分數
     private int _phaseStartScoreT = 0;
     private int _phaseStartScoreCT = 0;
     
@@ -137,8 +135,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private HashSet<ulong> _hasReceivedInitialReminder = new(64);
 
-    // 【新增 - 第 1 點優化】專門用來收看 HUD 的玩家點名板
-    private List<CCSPlayerController> _hudPlayers = new(64);
+    // ★ 終極優化：全伺服器共用的玩家點名板（取代所有定時器裡的 Utilities.GetPlayers()）
+    private List<CCSPlayerController> _serverPlayersCache = new(64);
 
     private bool _isMatchLive = false;
     private bool _isChangingMap = false; 
@@ -156,7 +154,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
 
-    // 【新增 - 第 3 點優化】統一尋找隊伍實體的快取方法，降低引擎負載
     private void EnsureTeamEntitiesCached()
     {
         if (_cachedTeamT is { IsValid: true } && _cachedTeamCT is { IsValid: true }) return;
@@ -168,15 +165,15 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // 【新增 - 第 1 點優化】更新點名板的專用方法
+    // ★ 刷新全域快取的方法：只在事件觸發時更新
     private void RefreshActivePlayers()
     {
-        _hudPlayers.Clear();
+        _serverPlayersCache.Clear();
         foreach (var p in Utilities.GetPlayers())
         {
-            if (p is { IsValid: true, IsBot: false, TeamNum: 2 or 3 })
+            if (p is { IsValid: true, Handle: not 0 })
             {
-                _hudPlayers.Add(p);
+                _serverPlayersCache.Add(p);
             }
         }
     }
@@ -197,15 +194,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _centerMessageExpiration = Server.CurrentTime + duration;
     }
 
-    // 【優化 - 第 1 點】OnTick 完美版：不再製造任何記憶體垃圾
     private void OnTick()
     {
         if (!string.IsNullOrEmpty(_activeCenterMessage))
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
-                // 直接向點名板上的玩家發送，速度最快、0 垃圾負擔
-                foreach (var p in _hudPlayers)
+                // ★ 使用全域快取
+                foreach (var p in _serverPlayersCache)
                 {
                     if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
                 }
@@ -213,7 +209,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             else
             {
                 _activeCenterMessage = "";
-                foreach (var p in _hudPlayers)
+                foreach (var p in _serverPlayersCache)
                 {
                     if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
                 }
@@ -221,7 +217,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // 【優化 - 第 2 點】將雙層迴圈改為單次遍歷
     private void CheckPendingReminders()
     {
         if (_pendingInitialReminders.Count == 0) return;
@@ -229,8 +224,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         float currentTime = Server.CurrentTime;
         List<ulong>? toRemove = null;
 
-        // 單次遍歷：只呼叫一次 GetPlayers() 就能精準找到需要提醒的人
-        foreach (var p in Utilities.GetPlayers())
+        // ★ 使用全域快取，單次遍歷
+        foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, SteamID: > 0, TeamNum: 2 or 3 })
             {
@@ -253,7 +248,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
 
-        // 安全機制：檢查是否有已經斷線但時間到期的垃圾資料需要清理
         foreach (var kvp in _pendingInitialReminders)
         {
             if (currentTime >= kvp.Value)
@@ -263,7 +257,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
 
-        // 統一清理已提醒或已過期的 SteamID
         if (toRemove is not null) 
         {
             foreach (var id in toRemove) _pendingInitialReminders.Remove(id);
@@ -294,7 +287,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override void Load(bool hotReload)
     {
         Console.WriteLine("=================================================");
-        Console.WriteLine("  LiteMatchManager (無縫HUD + 原生30勝結算版) 啟動！");
+        Console.WriteLine("  LiteMatchManager (極致優化：0 GC + 黑洞拔除版) 啟動！");
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
@@ -344,7 +337,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
                 }
             }
-            // 【第 1 點優化綁定】玩家斷線時，通知下一幀更新名單
             Server.NextFrame(RefreshActivePlayers);
             return HookResult.Continue;
         });
@@ -380,7 +372,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                     else if (_readyPlayers.Remove(steamId))
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 取 準 備");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
                     }
                     _playerUnreadyTime.Remove(steamId); 
                 }
@@ -428,15 +420,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     Server.NextFrame(CheckPhaseWin);
                 }
             }
-            // 【第 1 點優化綁定】玩家換隊伍時，通知下一幀更新名單
             Server.NextFrame(RefreshActivePlayers);
             return HookResult.Continue;
         }, HookMode.Post);
 
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
-        
-        // ★ 核心補回：確保伺服器達到總分 30 勝跳出結算時，捕捉並執行換圖！
         RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
 
         RegisterEventHandler<EventRoundEnd>((@event, info) => {
@@ -454,17 +443,16 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             Console.WriteLine($"[LiteMatch] 地圖載入完成！執行暖身：{Config.WarmupConfigName}");
             Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
             
-            // 【第 1 點優化綁定】換地圖時刷新名單
             Server.NextFrame(RefreshActivePlayers);
         });
 
-        // 確保熱重載 (Hot Reload) 時能立刻建立名單
         Server.NextFrame(RefreshActivePlayers);
     }
 
     private int GetDynamicRequiredPlayers()
     {
         int activeT = 0, activeCT = 0;
+        // 動態事件與狀態計算保持 GetPlayers 確保 0 延遲的準確性
         foreach (var p in Utilities.GetPlayers())
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false })
@@ -481,7 +469,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         return target > absoluteMax ? absoluteMax : target;
     }
 
-    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private void CheckPhaseWin()
     {
         if (_isServerShuttingDown || !_isMatchLive || _isChangingMap) return; 
@@ -504,20 +491,17 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
         
-        // 判斷是否過階段時，只看「當前階段拿到幾分」
         int currentPhaseScoreT = scoreT - _phaseStartScoreT;
         int currentPhaseScoreCT = scoreCT - _phaseStartScoreCT;
         
         var currentPhase = Config.MatchModes[_currentPhaseIndex];
 
-        // 若達到該階段的 WinLimit，觸發階段切換
         if (currentPhaseScoreT >= currentPhase.WinLimit || currentPhaseScoreCT >= currentPhase.WinLimit)
         {
             _currentPhaseIndex++; 
             
             if (_currentPhaseIndex < Config.MatchModes.Count)
             {
-                // 單純把現在的分數設為下個階段的 0 分基準
                 _phaseStartScoreT = scoreT;
                 _phaseStartScoreCT = scoreCT;
                 
@@ -527,7 +511,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private HookResult OnMatchEnd(EventCsWinPanelMatch @event, GameEventInfo info)
     {
         if (!_isMatchLive || _isChangingMap) return HookResult.Continue;
@@ -539,11 +522,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_cachedTeamT != null) scoreT = _cachedTeamT.Score;
         if (_cachedTeamCT != null) scoreCT = _cachedTeamCT.Score;
 
-        // 廣播時直接顯示全場真實總分，不扣除階段分數
         string winnerName = scoreT > scoreCT ? "恐怖份子" : "反恐小組";
         string loserName = scoreT > scoreCT ? "反恐小組" : "恐怖份子";
         
-        // 加入 1V1 玩家名稱判斷
         if (_liveMatchTargetPlayers == 2)
         {
             string nameT = "恐怖份子";
@@ -559,7 +540,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         int winnerScore = Math.Max(scoreT, scoreCT);
         int loserScore = Math.Min(scoreT, scoreCT);
-        string scoreString = $"{winnerScore} : {loserScore}";
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green} {winnerScore} : {loserScore} {ChatColors.Gold}贏得了最終勝利");
 
@@ -840,7 +820,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             
             Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{modeText} 比 賽 開 始");
 
-            // 加入 2V2 團戰提示 log
             if (activeT >= 2 && activeCT >= 2)
             {
                 Console.WriteLine("[2V2團戰]比賽開始");
@@ -860,6 +839,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             });
         }
     }
+
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
@@ -971,47 +951,45 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         player.PrintToChat($" [ {ChatColors.Green}步槍{ChatColors.White} ] {ChatColors.Green}!gr {ChatColors.White}[ Galil ] 、{ChatColors.Green}!ak {ChatColors.White}[ AK47 ] 、{ChatColors.Green}!a1 {ChatColors.White}[ M4A1 ] 、{ChatColors.Green}!a4 {ChatColors.White}[ M4A4 ]");
     }
 
+    // ★ 拔除黑洞，並改用全域快取
     private void CheckAndWarnUnreadyPlayers()
     {
         if (_isMatchLive) return; 
 
-        try 
+        foreach (var p in _serverPlayersCache)
         {
-            foreach (var p in Utilities.GetPlayers())
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
             {
-                if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
+                ulong steamId = p.SteamID;
+                if (!_readyPlayers.Contains(steamId))
                 {
-                    ulong steamId = p.SteamID;
-                    if (!_readyPlayers.Contains(steamId))
-                    {
-                        _playerUnreadyTime.TryGetValue(steamId, out int currentTime);
-                        _playerUnreadyTime[steamId] = currentTime + Config.UnreadyReminderInterval;
+                    _playerUnreadyTime.TryGetValue(steamId, out int currentTime);
+                    _playerUnreadyTime[steamId] = currentTime + Config.UnreadyReminderInterval;
 
-                        if (_playerUnreadyTime[steamId] >= Config.KickUnreadyPlayerTime) 
-                        {
-                            string kickedName = p.PlayerName;
-                            Server.NextFrame(() => Server.ExecuteCommand($"kickid {p.UserId} Unready_Timeout"));
-                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{kickedName} {ChatColors.White}因 未 準 備 好 而 被 踢 出");
-                            _playerUnreadyTime.Remove(steamId);
-                        }
-                        else
-                        {
-                            int timeLeft = Config.KickUnreadyPlayerTime - _playerUnreadyTime[steamId];
-                            p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                        }
+                    if (_playerUnreadyTime[steamId] >= Config.KickUnreadyPlayerTime) 
+                    {
+                        string kickedName = p.PlayerName;
+                        Server.NextFrame(() => Server.ExecuteCommand($"kickid {p.UserId} Unready_Timeout"));
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{kickedName} {ChatColors.White}因 未 準 備 好 而 被 踢 出");
+                        _playerUnreadyTime.Remove(steamId);
+                    }
+                    else
+                    {
+                        int timeLeft = Config.KickUnreadyPlayerTime - _playerUnreadyTime[steamId];
+                        p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
                     }
                 }
             }
-        } 
-        catch (Exception) { }
+        }
     }
 
+    // ★ 使用全域快取
     private void BroadcastWaitingMessage()
     {
         if (_isMatchLive) return;
         
         int totalPlayers = 0;
-        foreach (var p in Utilities.GetPlayers())
+        foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 }) totalPlayers++;
         }
@@ -1025,42 +1003,40 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
+    // ★ 拔除黑洞，並改用全域快取
     private void BroadcastUnreadyPlayers()
     {
         if (_isMatchLive) return; 
-        try 
+        
+        _unreadyNamesCache.Clear();
+        int totalPlayers = 0; 
+        
+        foreach (var p in _serverPlayersCache)
         {
-            _unreadyNamesCache.Clear();
-            int totalPlayers = 0; 
-            
-            foreach (var p in Utilities.GetPlayers())
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
             {
-                if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
-                {
-                    totalPlayers++; 
-                    if (!_readyPlayers.Contains(p.SteamID)) _unreadyNamesCache.Add(p.PlayerName); 
-                }
-            }
-            
-            if (totalPlayers > 0 && totalPlayers == _readyPlayers.Count) return;
-
-            if (_unreadyNamesCache.Count > 0 || totalPlayers >= 2) 
-            {
-                int targetPlayers = GetDynamicRequiredPlayers();
-                int teamSize = targetPlayers / 2;
-                
-                string modeHint = totalPlayers switch {
-                    2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 মিলিটারি {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
-                    > 2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}已觸發團戰，需滿 {ChatColors.Green}{targetPlayers} {ChatColors.White}人輸入 {ChatColors.Orange}!R {ChatColors.White}可開始 {ChatColors.Green}{teamSize} v {teamSize} 團戰{ChatColors.White}",
-                    _ => ""
-                };
-                
-                if (_unreadyNamesCache.Count > 0)
-                    Server.PrintToChatAll($" {_cachedPrefix} 尚未準備玩家：{ChatColors.Orange}{string.Join(", ", _unreadyNamesCache)}{ChatColors.Default} | 對戰需滿 {ChatColors.Green}{targetPlayers}{ChatColors.Default} 人");
-                if (!string.IsNullOrEmpty(modeHint)) Server.PrintToChatAll(modeHint); 
+                totalPlayers++; 
+                if (!_readyPlayers.Contains(p.SteamID)) _unreadyNamesCache.Add(p.PlayerName); 
             }
         }
-        catch (Exception) { }
+        
+        if (totalPlayers > 0 && totalPlayers == _readyPlayers.Count) return;
+
+        if (_unreadyNamesCache.Count > 0 || totalPlayers >= 2) 
+        {
+            int targetPlayers = GetDynamicRequiredPlayers();
+            int teamSize = targetPlayers / 2;
+            
+            string modeHint = totalPlayers switch {
+                2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}目 前 場 上 {ChatColors.Green}2 {ChatColors.White}人，雙 方 輸 入 {ChatColors.Orange}!R {ChatColors.White}即 可 直 接 {ChatColors.Green}1 v 1 單 挑{ChatColors.White}",
+                > 2 => $" [ {ChatColors.Green}對 戰 系 統{ChatColors.White} ] {ChatColors.White}已觸發團戰，需滿 {ChatColors.Green}{targetPlayers} {ChatColors.White}人輸入 {ChatColors.Orange}!R {ChatColors.White}可開始 {ChatColors.Green}{teamSize} v {teamSize} 團戰{ChatColors.White}",
+                _ => ""
+            };
+            
+            if (_unreadyNamesCache.Count > 0)
+                Server.PrintToChatAll($" {_cachedPrefix} 尚未準備玩家：{ChatColors.Orange}{string.Join(", ", _unreadyNamesCache)}{ChatColors.Default} | 對戰需滿 {ChatColors.Green}{targetPlayers}{ChatColors.Default} 人");
+            if (!string.IsNullOrEmpty(modeHint)) Server.PrintToChatAll(modeHint); 
+        }
     }
 
     private void ResetMatchState()
@@ -1089,7 +1065,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _waitingTimer = AddTimer(Config.WaitingForOpponentInterval, BroadcastWaitingMessage, TimerFlags.REPEAT);
     }
 
-    // 【套用 - 第 3 點優化】改用快取方法尋找實體
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         if (!_isMatchLive || Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return HookResult.Continue;
@@ -1099,15 +1074,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
         
-        // HUD 畫面上顯示的分數，永遠減去「這階段開始時的基準分」
         int displayScoreT = scoreT - _phaseStartScoreT;
         int displayScoreCT = scoreCT - _phaseStartScoreCT;
         
-        // 防呆保護
         if (displayScoreT < 0) displayScoreT = 0;
         if (displayScoreCT < 0) displayScoreCT = 0;
 
-        // 雙方 0:0 時，直接跳過不顯示 HUD 提示
         if (displayScoreT == 0 && displayScoreCT == 0)
         {
             return HookResult.Continue;
