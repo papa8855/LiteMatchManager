@@ -403,7 +403,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         _readyPlayers.Remove(steamId);
                         
-                        // ★ 修正：分數已滿，無視換隊干擾
+                        // ★ 分數已滿，無視換隊干擾
                         if (IsMatchOver()) return HookResult.Continue;
                         
                         if (_liveMatchTargetPlayers == 2)
