@@ -308,6 +308,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                             int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
                             p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                            p.PrintToCenter($"請輸入 !r 準備，{timeLeft} 秒後將被踢出"); // ★ 新增推薦 1 提示
                         }
                     }
                 }
@@ -788,12 +789,17 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         if (player.TeamNum is 0 or 1) 
         { 
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 觀 戰 者 模 式 加 入 對 戰"); 
-            player.PrintToCenter("您 無 法 從 觀 戰 者 模 式 加 入 對 戰");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 旁 觀 者 模 式 加 入 對 戰"); 
+            player.PrintToCenter("您 無 法 從 旁 觀 者 模 式 加 入 對 戰");
             return; 
         }
         ulong steamId = player.SteamID;
-        if (!_readyPlayers.Add(steamId)) { player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); return; }
+        if (!_readyPlayers.Add(steamId)) 
+        { 
+            player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); 
+            player.PrintToCenter("您 已經是準備完成的狀態"); // ★ 新增推薦 2 提示
+            return; 
+        }
 
         _playerUnreadyTime.Remove(steamId); 
         _pendingInitialReminders.Remove(steamId); 
@@ -1036,6 +1042,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         int timeLeft = Config.KickUnreadyPlayerTime - _playerUnreadyTime[steamId];
                         p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                        p.PrintToCenter($"請輸入 !r 準備，{timeLeft} 秒後將被踢出"); // ★ 新增推薦 1 提示
                     }
                 }
             }
