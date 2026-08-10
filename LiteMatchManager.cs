@@ -109,7 +109,7 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_MatchAbort_Line2")] public string HudHtml_MatchAbort_Line2 { get; set; } = "<font class='fontSize-l' color='lime'><b>比 賽 已 退 回 暖 身 模 式</font></b>";
     
     [JsonPropertyName("HudHtml_Round1_Line1")] public string HudHtml_Round1_Line1 { get; set; } = "<font class='fontSize-l' color='gold'><b>★ {0} 戰 鬥 開 始 ★</font></b><br>";
-    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>３０</b></font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
+    [JsonPropertyName("HudHtml_Round1_Line2")] public string HudHtml_Round1_Line2 { get; set; } = "<font class='fontSize-l' color='white'><b>對 戰 採</font><font class='fontSize-l' color='lime'><b>３０</b></font><font class='fontSize-l' color='white'> 回 防 勝 利 制</font></b>";
     
     [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'><b>{0}回合：</b></font><font class='fontSize-l' color='gold'><b>模式 / 搶 </b></font><font class='fontSize-l' color='Green'><b>{1}</b></font><font class='fontSize-l' color='gold'><b> 勝</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
@@ -487,7 +487,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _cachedTeamCT = null;
 
             ResetMatchState();
-            Console.WriteLine($"[LiteMatch] 地圖載入完成！執行暖身：{Config.WarmupConfigName}");
             Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
             
             Server.NextFrame(RefreshActivePlayers);
@@ -756,6 +755,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!isPrimary && !isSecondary)
         {
             player.PrintToChat($" {_cachedPrefix} 當 前 為 【 {ChatColors.Gold}{phase.Name}{ChatColors.White} 】 模 式，禁 止 使 用 該 武 器");
+            player.PrintToCenter("該 模 式 不 能 使 用 這 把 武 器");
             return;
         }
 
@@ -786,7 +786,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void HandlePlayerReady(CCSPlayerController player)
     {
-        if (player.TeamNum is 0 or 1) { player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 旁 觀 者 模 式 加 入 對 戰"); return; }
+        if (player.TeamNum is 0 or 1) 
+        { 
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 觀 戰 者 模 式 加 入 對 戰"); 
+            player.PrintToCenter("您 無 法 從 觀 戰 者 模 式 加 入 對 戰");
+            return; 
+        }
         ulong steamId = player.SteamID;
         if (!_readyPlayers.Add(steamId)) { player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); return; }
 
@@ -915,7 +920,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 Server.NextFrame(() => {
                     if (player.IsValid) {
                         player.ChangeTeam(CsTeam.Spectator);
-                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}比 賽 已 開 始，非 參 賽 者 無 法 加 入");
+                        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}比 賽 已 開 始，非 參 賽 者 無 法 加 加 入");
                     }
                 });
                 return HookResult.Continue; 
