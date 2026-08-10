@@ -308,7 +308,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                             int timeLeft = Config.KickUnreadyPlayerTime - elapsed;
                             p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                            p.PrintToCenter($"請輸入 !r 準備，{timeLeft} 秒後將被踢出"); // ★ 新增推薦 1 提示
+                            p.PrintToCenter($"請輸入 !R 準備，{timeLeft} 秒後將被踢出"); // ★ 新增推薦 1 提示
                         }
                     }
                 }
@@ -797,7 +797,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!_readyPlayers.Add(steamId)) 
         { 
             player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！"); 
-            player.PrintToCenter("您已經是 準 備 完 成 的狀態"); // ★ 新增推薦 2 提示
+            player.PrintToCenter("您已經是 準 備 完 成 的狀態"); //  2 提示
             return; 
         }
 
@@ -1042,7 +1042,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         int timeLeft = Config.KickUnreadyPlayerTime - _playerUnreadyTime[steamId];
                         p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備 ，{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                        p.PrintToCenter($"請輸入 !R 準備，{timeLeft} 秒後將被踢出"); // ★ 新增推薦 1 提示
+                        p.PrintToCenter($"請輸入 !R 準備，{timeLeft} 秒後將被踢出"); //  1 提示
                     }
                 }
             }
