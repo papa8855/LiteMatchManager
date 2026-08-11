@@ -144,6 +144,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     
     private HashSet<ulong> _readyPlayers = new(64);
     private Dictionary<ulong, int> _playerUnreadyTime = new(64); 
+    private Dictionary<ulong, float> _playerJoinTime = new(64); // ★ 新增：精準紀錄玩家成為未準備狀態的時間點
     private List<string> _unreadyNamesCache = new(64); 
     private Dictionary<ulong, string> _playerPrimary = new(64);
     private Dictionary<ulong, string> _playerSecondary = new(64);
@@ -218,7 +219,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-    // ★ 新增：檢查比賽是否已經達到最終勝利條件 (防止勝利面板空窗期逃跑)
     private bool IsMatchOver()
     {
         if (_isChangingMap) return true;
@@ -227,7 +227,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int scoreT = _cachedTeamT?.Score ?? 0;
         int scoreCT = _cachedTeamCT?.Score ?? 0;
         
-        // 只要任一隊分數達到 30 勝 (或設定檔中的目標)，即代表比賽已結束，進入無敵狀態
         if (scoreT >= Config.FinalMatchWinScore || scoreCT >= Config.FinalMatchWinScore)
             return true;
             
@@ -359,7 +358,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     _readyPlayers.Remove(steamId);
 
-                    // ★ 修正：若是比賽已經達到 30 勝（準備彈勝利面板或換圖中），直接無視玩家中離！
                     if (IsMatchOver()) return HookResult.Continue;
 
                     if (_liveMatchTargetPlayers == 2)
@@ -377,6 +375,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     _readyPlayers.Remove(steamId);
                     _playerUnreadyTime.Remove(steamId);
+                    _playerJoinTime.Remove(steamId); // ★ 新增：清理暫存
                     _playerPrimary.Remove(steamId);
                     _playerSecondary.Remove(steamId);
                     _pendingInitialReminders.Remove(steamId);
@@ -399,12 +398,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     _pendingInitialReminders.Remove(steamId);
                     _hasReceivedInitialReminder.Remove(steamId);
+                    _playerJoinTime.Remove(steamId); // ★ 新增：離開隊伍時清除新手保護計時
 
                     if (_isMatchLive && _readyPlayers.Contains(steamId))
                     {
                         _readyPlayers.Remove(steamId);
                         
-                        // ★ 分數已滿，無視換隊干擾
                         if (IsMatchOver()) return HookResult.Continue;
                         
                         if (_liveMatchTargetPlayers == 2)
@@ -517,7 +516,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void CheckPhaseWin()
     {
-        // ★ 修正：檢查是否已達 30 勝，若達標則封鎖階段結算防干擾
         if (_isServerShuttingDown || !_isMatchLive || IsMatchOver()) return; 
         
         int activeT = 0, activeCT = 0;
@@ -596,7 +594,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void AbortMatch()
     {
-        // ★ 修正：若分數已達 30，直接強制封鎖退回暖身的操作
         if (!_isMatchLive || IsMatchOver()) return;
         
         _liveTimer?.Kill(); _liveTimer = null;
@@ -836,6 +833,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_readyPlayers.Remove(steamId)) 
         {
             _playerUnreadyTime[steamId] = 0; 
+            _playerJoinTime[steamId] = Server.CurrentTime; // ★ 新增：重新記錄未準備的起始時間
+            
             int targetPlayers = GetDynamicRequiredPlayers();
             int missingPlayers = targetPlayers - _readyPlayers.Count;
             
@@ -916,7 +915,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!_isMatchLive && player.TeamNum is 2 or 3)
         {
             if (!_readyPlayers.Contains(steamId) && _hasReceivedInitialReminder.Add(steamId))
+            {
                 _pendingInitialReminders[steamId] = Server.CurrentTime + 5.0f;
+                _playerJoinTime[steamId] = Server.CurrentTime; // ★ 新增：精準記錄玩家產生未準備狀態的時間
+            }
         }
 
         if (_isMatchLive && player.TeamNum is 2 or 3)
@@ -1028,6 +1030,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 ulong steamId = p.SteamID;
                 if (!_readyPlayers.Contains(steamId))
                 {
+                    // ★ 新增保護：加入未滿一輪間隔，跳過本次警告與扣時
+                    _playerJoinTime.TryGetValue(steamId, out float joinTime);
+                    // 扣掉 2 秒作為延遲容錯空間，避免計時器稍微提早觸發被略過
+                    if (joinTime > 0 && (Server.CurrentTime - joinTime) < (Config.UnreadyReminderInterval - 2.0f))
+                    {
+                        continue; 
+                    }
+
                     _playerUnreadyTime.TryGetValue(steamId, out int currentTime);
                     _playerUnreadyTime[steamId] = currentTime + Config.UnreadyReminderInterval;
 
@@ -1113,6 +1123,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _liveMatchTargetPlayers = 0; 
         _readyPlayers.Clear();
         _playerUnreadyTime.Clear();
+        _playerJoinTime.Clear(); // ★ 新增：清理暫存
         
         _playerPrimary.Clear();
         _playerSecondary.Clear();
