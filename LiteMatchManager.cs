@@ -119,7 +119,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override string ModuleName => "LiteMatchManager";
     public override string ModuleVersion => "9.30_NoLinq_AntiJitter";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 + 0 GC (絕對無 LINQ) + 阻斷無限迴圈究極版 + 防白框殘留";
+    public override string ModuleDescription => "原生30勝換圖";
 
     public LiteMatchConfig Config { get; set; } = new();
 
