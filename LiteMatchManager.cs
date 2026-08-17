@@ -119,7 +119,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public override string ModuleName => "LiteMatchManager";
     public override string ModuleVersion => "9.30_NoLinq_AntiJitter";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 + 0 GC (絕對無 LINQ) + 阻斷無限迴圈究極版";
+    public override string ModuleDescription => "原生30勝換圖 + 0 GC (絕對無 LINQ) + 阻斷無限迴圈究極版 + 防白框殘留";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -279,7 +279,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _activeCenterMessage = "";
                 foreach (var p in _serverPlayersCache)
                 {
-                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
+                    // 【修正】：拿掉 TeamNum: 2 or 3 的限制，確保所有玩家（包含觀戰者）都能把白框清空
+                    if (p is { IsValid: true }) p.PrintToCenterHtml("&#8203;", 0);
                 }
             }
         }
@@ -400,6 +401,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 
                 if (newTeam is 0 or 1) 
                 {
+                    // 【修正】：玩家跳去觀戰或選隊伍介面的瞬間，直接強制清除他的畫面，防止白框殘留
+                    player.PrintToCenterHtml("&#8203;", 0);
+
                     _pendingInitialReminders.Remove(steamId);
                     _hasReceivedInitialReminder.Remove(steamId);
                     _playerJoinTime.Remove(steamId); 
