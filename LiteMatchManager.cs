@@ -9,6 +9,7 @@ using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
+using System.Collections.Frozen; // 【.NET 10 升級】：引入凍結集合
 
 namespace LiteMatchManager;
 
@@ -124,21 +125,24 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
-    private List<string> _cachedGunMenuMessage = new(); 
+    // 【.NET 10 升級】：集合表達式
+    private List<string> _cachedGunMenuMessage = []; 
     
     private int _currentPhaseIndex = 0; 
     private int _phaseStartScoreT = 0;
     private int _phaseStartScoreCT = 0;
     
-    private HashSet<string> _readyCommandsSet = new(StringComparer.OrdinalIgnoreCase);
-    private HashSet<string> _gunMenuCommandsSet = new(StringComparer.OrdinalIgnoreCase);
+    // 【.NET 10 升級】：改用 FrozenSet 鎖死效能
+    private FrozenSet<string> _readyCommandsSet = FrozenSet<string>.Empty;
+    private FrozenSet<string> _gunMenuCommandsSet = FrozenSet<string>.Empty;
     
-    private static readonly HashSet<string> PistolWeapons = new(StringComparer.OrdinalIgnoreCase)
+    // 【.NET 10 升級】：靜態常數集合採用 FrozenSet 達成極致比對速度
+    private static readonly FrozenSet<string> PistolWeapons = new[]
     {
         "weapon_usp_silencer", "weapon_glock", "weapon_deagle", "weapon_revolver",
         "weapon_p250", "weapon_tec9", "weapon_fiveseven", "weapon_cz75a",
         "weapon_elite", "weapon_hkp2000"
-    };
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
     
     private HashSet<ulong> _readyPlayers = new(64);
     
@@ -190,11 +194,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     public void OnConfigParsed(LiteMatchConfig config)
     {
         var caseInsensitiveDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kvp in config.WeaponCommands) caseInsensitiveDict[kvp.Key] = kvp.Value;
+        // 【.NET 10 升級】：字典解構
+        foreach (var (key, value) in config.WeaponCommands) caseInsensitiveDict[key] = value;
         config.WeaponCommands = caseInsensitiveDict;
 
-        _readyCommandsSet = new HashSet<string>(config.ReadyCommands, StringComparer.OrdinalIgnoreCase);
-        _gunMenuCommandsSet = new HashSet<string>(config.GunMenuCommands, StringComparer.OrdinalIgnoreCase);
+        // 【.NET 10 升級】：將設定檔傳入的指令直接轉換為凍結集合
+        _readyCommandsSet = config.ReadyCommands.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+        _gunMenuCommandsSet = config.GunMenuCommands.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
         Config = config;
         
@@ -279,8 +285,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 _activeCenterMessage = "";
                 foreach (var p in _serverPlayersCache)
                 {
-                    // 【修正】：拿掉 TeamNum: 2 or 3 的限制，確保所有玩家（包含觀戰者）都能把白框清空
-                    if (p is { IsValid: true }) p.PrintToCenterHtml("&#8203;", 0);
+                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
                 }
             }
         }
@@ -302,7 +307,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 {
                     if (currentTime >= triggerTime)
                     {
-                        if (toRemove == null) toRemove = new List<ulong>();
+                        // 【.NET 10 升級】：集合表達式
+                        if (toRemove == null) toRemove = [];
                         toRemove.Add(steamId);
 
                         if (!_isMatchLive && !_readyPlayers.Contains(steamId))
@@ -317,12 +323,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
 
-        foreach (var kvp in _pendingInitialReminders)
+        // 【.NET 10 升級】：字典解構
+        foreach (var (key, value) in _pendingInitialReminders)
         {
-            if (currentTime >= kvp.Value)
+            if (currentTime >= value)
             {
-                if (toRemove == null) toRemove = new List<ulong>();
-                if (!toRemove.Contains(kvp.Key)) toRemove.Add(kvp.Key);
+                if (toRemove == null) toRemove = [];
+                if (!toRemove.Contains(key)) toRemove.Add(key);
             }
         }
 
@@ -440,7 +447,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         // 1. 比賽中：原本已準備的玩家，企圖換到敵方隊伍
                         if (_readyPlayers.Contains(steamId))
                         {
-                            // 【核心防護】對照陣營名冊，阻斷 ChangeTeam 造成的無限迴圈
+                            // 【核心防護】對照陣營名冊，阻断 ChangeTeam 造成的無限迴圈
                             if (_lockedTeam.TryGetValue(steamId, out int lockedTeam))
                             {
                                 if (newTeam != lockedTeam)
@@ -490,7 +497,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                                 {
                                     _readyPlayers.Add(steamId);
                                     _lockedTeam[steamId] = newTeam; // 補位成功，寫入名冊鎖
-                                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 入 團 戰 比 賽");
+                                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 加 入 團 戰 比 賽");
                                 }
                             }
                         }
@@ -690,7 +697,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         if (!isCommand) 
         {
-            string message = rawArg.Trim('"', ' '); 
+            // 【.NET 10 升級】：改用 Span 切片去除多餘符號，0 記憶體分配
+            string message = rawArg.AsSpan().Trim(" \"").ToString(); 
             if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
             string playerName = player.PlayerName;
             string nameColor = player.TeamNum switch { 1 => $"{ChatColors.Grey}", 2 => "\x10", 3 => "\x0B", _ => $"{ChatColors.White}" };
@@ -700,7 +708,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Handled; 
         }
 
-        string command = rawArg.Trim('"', ' ', '!', '/').ToLower();
+        // 【.NET 10 升級】：改用 Span 切片去除多餘符號，0 記憶體分配
+        string command = rawArg.AsSpan().Trim(" \"!/").ToString().ToLower();
 
         if (command == "nextmap" && AdminManager.PlayerHasPermissions(player, "@css/root"))
         {
@@ -767,10 +776,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         _isChangingMap = true; 
         
         var random = new Random();
-        string selectedMapString = Config.MapList[random.Next(Config.MapList.Count)];
-        string[] parts = selectedMapString.Split(':');
-        string mapName = parts[0];
-        string workshopId = parts.Length > 1 ? parts[1] : "";
+        
+        // 【.NET 10 升級】：改用 Span 切片，徹底消除 Split 帶來的字串陣列分配
+        ReadOnlySpan<char> selectedMapSpan = Config.MapList[random.Next(Config.MapList.Count)].AsSpan();
+        int colonIndex = selectedMapSpan.IndexOf(':');
+        string mapName = colonIndex == -1 ? selectedMapSpan.ToString() : selectedMapSpan[..colonIndex].ToString();
+        string workshopId = colonIndex == -1 ? "" : selectedMapSpan[(colonIndex + 1)..].ToString();
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}5 秒{ChatColors.White} {ChatColors.Gold}後 自動載入下一張地圖：{ChatColors.Lime}{mapName} ...");
 
