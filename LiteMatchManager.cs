@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
 using System.Collections.Frozen; // 【.NET 10 升級】：引入凍結集合
-using System.IO; // 【新增】：用來讀取廣告黑名單 txt 檔案
 
 namespace LiteMatchManager;
 
@@ -128,9 +127,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _cachedPrefix = "";
     // 【.NET 10 升級】：集合表達式
     private List<string> _cachedGunMenuMessage = []; 
-    
-    // 【新增】：廣告防禦黑名單 (Ad Blacklist)
-    public string[] adBlacklist = [];
     
     private int _currentPhaseIndex = 0; 
     private int _phaseStartScoreT = 0;
@@ -350,8 +346,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         Console.WriteLine("=================================================");
 
         _isServerShuttingDown = false;
-        
-        LoadAdBlacklist(); // 【新增】：載入廣告黑名單
 
         AddCommandListener("say", OnPlayerSay);
         AddCommandListener("say_team", OnPlayerSay);
@@ -362,34 +356,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
-
-        // ▼▼▼ 新增：廣告防禦門神 (進場名稱秒踢與永久封鎖) ▼▼▼
-        RegisterEventHandler<EventPlayerConnectFull>((@event, info) => {
-            var player = @event.Userid;
-
-            if (player is { IsValid: true, IsBot: false } && !string.IsNullOrEmpty(player.PlayerName) && adBlacklist.Length > 0)
-            {
-                bool isAdName = false;
-                foreach (var ad in adBlacklist)
-                {
-                    if (player.PlayerName.Contains(ad, StringComparison.OrdinalIgnoreCase))
-                    {
-                        isAdName = true;
-                        break;
-                    }
-                }
-
-                if (isAdName)
-                {
-                    Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
-                    Server.ExecuteCommand($"css_addban {player.SteamID} 0"); 
-                    Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
-                    return HookResult.Continue;
-                }
-            }
-            return HookResult.Continue;
-        });
-        // ▲▲▲ 新增結束 ▲▲▲
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
@@ -719,29 +685,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (player is not { IsValid: true }) return HookResult.Continue;
         string rawArg = info.GetArg(1);
         if (string.IsNullOrWhiteSpace(rawArg)) return HookResult.Continue;
-
-        // ▼▼▼ 新增：廣告防禦門神 (文字黑洞吞噬與永久封鎖) ▼▼▼
-        if (adBlacklist.Length > 0)
-        {
-            bool isSpam = false;
-            foreach (var ad in adBlacklist)
-            {
-                if (rawArg.Contains(ad, StringComparison.OrdinalIgnoreCase))
-                {
-                    isSpam = true;
-                    break;
-                }
-            }
-
-            if (isSpam)
-            {
-                Console.WriteLine($"[廣告防禦] 攔截到洗頻訊息並直接吞掉: {rawArg}");
-                Server.ExecuteCommand($"css_addban {player.SteamID} 0");
-                Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
-                return HookResult.Handled; 
-            }
-        }
-        // ▲▲▲ 新增結束 ▲▲▲
 
         bool isCommand = false;
         for (int i = 0; i < rawArg.Length; i++)
@@ -1241,64 +1184,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         ShowHud(fullHudHtml, Config.RoundStartHudDuration);
 
         return HookResult.Continue;
-    }
-
-    // =========================================================================
-    // 載入廣告黑名單 (Ad Blacklist Loader)
-    // =========================================================================
-    private void LoadAdBlacklist()
-    {
-        // 完美鎖定 CS# 設定檔資料夾 (與 LiteMatchManager.json 同位子)
-        string directoryPath = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "configs", "plugins", "LiteMatchManager"));
-        string filePath = Path.Combine(directoryPath, "ad_blacklist.txt");
-
-        if (File.Exists(filePath))
-        {
-            try
-            {
-                var lines = File.ReadAllLines(filePath);
-                List<string> validLines = [];
-                foreach (var line in lines)
-                {
-                    // 【.NET 10 升級】：Span 零分配切片與驗證
-                    var trimmed = line.AsSpan().Trim();
-                    if (!trimmed.IsEmpty && !trimmed.StartsWith("//"))
-                    {
-                        validLines.Add(trimmed.ToString());
-                    }
-                }
-                // 【.NET 10 升級】：集合表達式轉換
-                adBlacklist = [.. validLines];
-                Console.WriteLine($"[LoadAdBlacklist] 成功載入 {adBlacklist.Length} 筆廣告黑名單。");
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"[LoadAdBlacklist FATAL] 讀取黑名單時發生錯誤: {e.Message}");
-            }
-        }
-        else
-        {
-            Console.WriteLine("[LoadAdBlacklist] 黑名單檔案不存在，建立預設檔案。");
-            try
-            {
-                if (!Directory.Exists(directoryPath))
-                {
-                    Directory.CreateDirectory(directoryPath);
-                }
-                // 預設寫入常見廣告，加上教學註解
-                File.WriteAllLines(filePath, [
-                    "// 在下方加入要封鎖的廣告網址或關鍵字 (一行一個)", 
-                    "// 系統會自動忽略 // 開頭的註解與空白行",
-                    "cs2commends", 
-                    "cs2commends.com"
-                ]);
-                adBlacklist = ["cs2commends", "cs2commends.com"];
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"[LoadAdBlacklist FATAL] 建立黑名單檔案時發生錯誤: {e.Message}");
-            }
-        }
     }
 
     public override void Unload(bool hotReload)
