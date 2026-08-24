@@ -1248,9 +1248,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     // =========================================================================
     private void LoadAdBlacklist()
     {
-        // 完美修正：指向與 LiteMatchManager.json 相同的 CS# 設定檔資料夾
-        string directoryPath = Path.Join(Server.GameDirectory, "addons/counterstrikesharp/configs/plugins/LiteMatchManager");
-        string filePath = Path.Join(directoryPath, "ad_blacklist.txt");
+        // 完美鎖定 CS# 設定檔資料夾 (與 LiteMatchManager.json 同位子)
+        string directoryPath = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "configs", "plugins", "LiteMatchManager"));
+        string filePath = Path.Combine(directoryPath, "ad_blacklist.txt");
 
         if (File.Exists(filePath))
         {
