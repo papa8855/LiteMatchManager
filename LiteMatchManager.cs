@@ -736,7 +736,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (isSpam)
             {
                 Console.WriteLine($"[廣告防禦] 攔截到洗頻訊息並直接吞掉: {rawArg}");
-                Server.ExecuteCommand($"css_addban {player.SteamID} 0");
+                Server.ExecuteCommand($"css_addban {player.SteamID} 0 機器人封鎖");
                 Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
                 return HookResult.Handled; 
             }
