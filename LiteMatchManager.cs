@@ -362,6 +362,32 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
+        // ▼▼▼ 新增：防禦機器人進場後「偷偷改名」的第二道防線 ▼▼▼
+        RegisterEventHandler<EventPlayerChangename>((@event, info) => {
+            var changedPlayer = @event.Userid;
+            string newName = @event.Newname;
+
+            if (changedPlayer is { IsValid: true, IsBot: false } && !string.IsNullOrEmpty(newName) && adBlacklist.Length > 0)
+            {
+                bool isAdName = false;
+                foreach (var ad in adBlacklist)
+                {
+                    if (newName.Contains(ad, StringComparison.OrdinalIgnoreCase))
+                    {
+                        isAdName = true;
+                        break;
+                    }
+                }
+
+                if (isAdName)
+                {
+                    Console.WriteLine($"[廣告防禦] 偵測到違規改名，瞬間 Ban 掉: {newName} (SteamID: {changedPlayer.SteamID})");
+                    Server.ExecuteCommand($"css_ban #{changedPlayer.UserId} 0 \"廣告機器人(改名)\"");
+                }
+            }
+            return HookResult.Continue;
+        });
+        // ▲▲▲ 第二道防線結束 ▲▲▲
 
         // ▼▼▼ 新增：廣告防禦門神 (進場名稱秒踢與永久封鎖) ▼▼▼
         RegisterEventHandler<EventPlayerConnectFull>((@event, info) => {
@@ -382,7 +408,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (isAdName)
                 {
                     Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
-                    Server.ExecuteCommand($"css_addban {player.SteamID} 0"); 
+                    Server.ExecuteCommand($"css_ban #{player.UserId} 0 \"廣告機器人封鎖\""); 
                     Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
                     return HookResult.Continue;
                 }
@@ -736,7 +762,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (isSpam)
             {
                 Console.WriteLine($"[廣告防禦] 攔截到洗頻訊息並直接吞掉: {rawArg}");
-                Server.ExecuteCommand($"css_addban {player.SteamID} 0 機器人封鎖");
+                Server.ExecuteCommand($"css_ban #{player.UserId} 0 \"廣告洗頻\"");
                 Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
                 return HookResult.Handled; 
             }
