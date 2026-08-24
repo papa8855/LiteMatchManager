@@ -68,7 +68,7 @@ public class LiteMatchConfig : BasePluginConfig
     
     [JsonPropertyName("Duel_GunMenuMessage")] 
     public List<string> GunMenuMessage { get; set; } = [
-        " {Orange}您 可 在 聊্বা 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
+        " {Orange}您 可 在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
         " -------------------------------------------------------------------",
         " [ {LightBlue}手槍{White} ]  {LightBlue}!dg {White}[ 沙鷹 ] 、{LightBlue}!usp {White}[ USP ] 、{LightBlue}!gk {White}[ 格洛克 ] 、{LightBlue}!r8 {White}[ R8 ]",
         " [ {Orange}狙擊{White} ] {Orange}!ssg {White}[ SSG 08 鳥狙 ] 、{Orange}!awp {White}[ AWP狙擊步槍 ]",
@@ -1248,8 +1248,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     // =========================================================================
     private void LoadAdBlacklist()
     {
-        string fileName = "LiteMatchManager/ad_blacklist.txt";
-        string filePath = Path.Join(Server.GameDirectory + "/csgo/cfg", fileName);
+        // 完美修正：指向與 LiteMatchManager.json 相同的 CS# 設定檔資料夾
+        string directoryPath = Path.Join(Server.GameDirectory, "addons/counterstrikesharp/configs/plugins/LiteMatchManager");
+        string filePath = Path.Join(directoryPath, "ad_blacklist.txt");
 
         if (File.Exists(filePath))
         {
@@ -1280,8 +1281,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             Console.WriteLine("[LoadAdBlacklist] 黑名單檔案不存在，建立預設檔案。");
             try
             {
-                string? directoryPath = Path.GetDirectoryName(filePath);
-                if (directoryPath is not null && !Directory.Exists(directoryPath))
+                if (!Directory.Exists(directoryPath))
                 {
                     Directory.CreateDirectory(directoryPath);
                 }
