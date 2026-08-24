@@ -746,13 +746,17 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string rawArg = info.GetArg(1);
         if (string.IsNullOrWhiteSpace(rawArg)) return HookResult.Continue;
 
-        // ▼▼▼ 新增：廣告防禦門神 (文字黑洞吞噬與永久封鎖) ▼▼▼
+       // ▼▼▼ 新增：廣告防禦門神 (文字與名稱雙重黑洞吞噬 + SteamID 絕殺) ▼▼▼
         if (adBlacklist.Length > 0)
         {
             bool isSpam = false;
+            string playerName = player.PlayerName ?? "";
+
             foreach (var ad in adBlacklist)
             {
-                if (rawArg.Contains(ad, StringComparison.OrdinalIgnoreCase))
+                // 【終極防護】：只要「講的話(rawArg)」或「名字(playerName)」其中一個有廣告，直接判定為洗頻！
+                if (rawArg.Contains(ad, StringComparison.OrdinalIgnoreCase) || 
+                    playerName.Contains(ad, StringComparison.OrdinalIgnoreCase))
                 {
                     isSpam = true;
                     break;
@@ -761,9 +765,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
             if (isSpam)
             {
-                Console.WriteLine($"[廣告防禦] 攔截到洗頻訊息並直接吞掉: {rawArg}");
-                Server.ExecuteCommand($"css_ban #{player.UserId} 0 \"廣告洗頻\"");
+                Console.WriteLine($"[廣告防禦] 攔截到洗頻或廣告名稱，直接吞掉: {playerName} 說了 {rawArg}");
+                
+                // 【絕對擊殺】：直接使用 SteamID 進行封鎖，確保 SimpleAdmin 100% 看得懂指令
+                Server.ExecuteCommand($"css_ban {player.SteamID} 0 \"廣告洗頻\"");
+                
+                // 補上一腳原生踢除，雙重保險確保牠瞬間消失
                 Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
+                
                 return HookResult.Handled; 
             }
         }
