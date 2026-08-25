@@ -408,7 +408,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (isAdName)
                 {
                     Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
-                    Server.ExecuteCommand($"css_ban #{player.UserId} 0 \"廣告機器人封鎖\""); 
+                    Server.ExecuteCommand($"css_ban #{player.UserId} 0 \"廣告機器人\""); 
                     Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
                     return HookResult.Continue;
                 }
@@ -792,7 +792,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             // 【.NET 10 升級】：改用 Span 切片去除多餘符號，0 記憶體分配
             string message = rawArg.AsSpan().Trim(" \"").ToString(); 
             if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
-            string playerName = player.PlayerName;
+            string playerName = player.PlayerName ?? "";
             string nameColor = player.TeamNum switch { 1 => $"{ChatColors.Grey}", 2 => "\x10", 3 => "\x0B", _ => $"{ChatColors.White}" };
             string formattedMessage = $" {ChatColors.White}[所有人]{ChatColors.White} {nameColor}{playerName}{ChatColors.White}：{message}";
 
