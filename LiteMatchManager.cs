@@ -768,7 +768,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 Console.WriteLine($"[廣告防禦] 攔截到洗頻或廣告名稱，直接吞掉: {playerName} 說了 {rawArg}");
                 
                 // 【絕對擊殺】：直接使用 SteamID 進行封鎖，確保 SimpleAdmin 100% 看得懂指令
-                Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告洗頻\"");
+                Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\"");
                 
                 // 補上一腳原生踢除，雙重保險確保牠瞬間消失
                 Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
