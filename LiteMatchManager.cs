@@ -379,17 +379,24 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                 }
 
-                if (isAdName)
+               if (isAdName)
                 {
                     Console.WriteLine($"[廣告防禦] 偵測到違規改名，瞬間 Ban 掉: {newName} (SteamID: {changedPlayer.SteamID})");
+                    
+                    // 新增：全伺服器公開廣播
+                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{newName} {ChatColors.White}已 被 永 久 封 鎖");
+                    
                     Server.ExecuteCommand($"css_addban {changedPlayer.SteamID} 0 \"廣告機器人\"");
+                    
+                    // 新增：順便補上一腳瞬間踢出，雙重保險
+                    Server.ExecuteCommand($"kickid {changedPlayer.UserId} \"Ban_Ads\"");
                 }
             }
             return HookResult.Continue;
         });
         // ▲▲▲ 第二道防線結束 ▲▲▲
 
-        // ▼▼▼ 新增：廣告防禦門神 (進場名稱秒踢與永久封鎖) ▼▼▼
+     // ▼▼▼ 新增：廣告防禦門神 (進場名稱秒踢與永久封鎖) ▼▼▼
         RegisterEventHandler<EventPlayerConnectFull>((@event, info) => {
             var player = @event.Userid;
 
@@ -408,6 +415,10 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (isAdName)
                 {
                     Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
+                    
+                    // 新增：全伺服器公開廣播
+                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 被 永 久 封 鎖！");
+                    
                     Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\""); 
                     Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
                     return HookResult.Continue;
@@ -416,7 +427,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         });
         // ▲▲▲ 新增結束 ▲▲▲
-
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
@@ -763,9 +773,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 }
             }
 
-            if (isSpam)
+           if (isSpam)
             {
                 Console.WriteLine($"[廣告防禦] 攔截到洗頻或廣告名稱，直接吞掉: {playerName} 說了 {rawArg}");
+                
+                // 新增：全伺服器公開廣播
+                Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{playerName} {ChatColors.White}已 被 永 久 封 鎖");
                 
                 // 【絕對擊殺】：直接使用 SteamID 進行封鎖，確保 SimpleAdmin 100% 看得懂指令
                 Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\"");
