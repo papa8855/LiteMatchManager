@@ -417,7 +417,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
                     
                     // 新增：全伺服器公開廣播
-                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 被 永 久 封 鎖！");
+                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 被 永 久 封 鎖");
                     
                     Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\""); 
                     Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
