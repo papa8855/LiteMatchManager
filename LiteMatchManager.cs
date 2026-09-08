@@ -1031,7 +1031,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             for (int i = 1; i <= countdown; i++)
             {
                 // HUD 畫面快取
-                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='red'>  秒 </font>⬅ ⬅ ⬅</b><br>";
+                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
                 
                 // 聊天室廣播快取 (把 3、2、1 的紅字也準備好)
@@ -1047,7 +1047,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (countdown > 0)
                 {
                     // A. HUD 畫面同步
-                    ShowHud(precompiledHuds[countdown], 0.95f); 
+                    ShowHud(precompiledHuds[countdown], 0.98f); 
                     
                     // B. 聊天室 3、2、1 同步廣播 (直接讀取快取，0效能消耗)
                     Server.PrintToChatAll(precompiledChats[countdown]);
