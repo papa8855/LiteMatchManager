@@ -1047,7 +1047,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (countdown > 0)
                 {
                     // A. HUD 畫面同步
-                    ShowHud(precompiledHuds[countdown], 0.96f); 
+                    ShowHud(precompiledHuds[countdown], 1.1f); 
                     
                     // B. 聊天室 3、2、1 同步廣播 (直接讀取快取，0效能消耗)
                     Server.PrintToChatAll(precompiledChats[countdown]);
