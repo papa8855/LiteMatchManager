@@ -1009,28 +1009,65 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
-            string hudStartText = $"{string.Format(Config.HudHtml_Round1_Line1, modeText)}<br>{string.Format(Config.HudHtml_Round1_Line2, displayLimit)}<br>";
-            ShowHud(hudStartText, Config.HudDuration_MatchStart);
-            
-            Server.PrintToChatAll($" {_cachedPrefix} 所 有 玩 家 已 準 備，{ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 開 始");
-
-            if (activeT >= 2 && activeCT >= 2)
-            {
-                Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
-            }
-            
+            // 1. 關閉所有等待與催促的計時器
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
             
+            // ==========================================
+            // 【無損夾心寫法：完全不影響你的 JSON 設定檔】
+            // ==========================================
+            string precompiledLine1 = string.Format(Config.HudHtml_Round1_Line1, modeText);
+            string precompiledLine2 = string.Format(Config.HudHtml_Round1_Line2, displayLimit);
+            
+            const string popupSoundCmd = "play sounds/ui/panorama/popup_reveal_01.vsnd";
+            int countdown = 3; 
+
+            // 左下角聊天室：防洗頻優化版廣播
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 準 備 開 戰！比 賽 將 於 {ChatColors.Red}3{ChatColors.White} 秒 後 開 始 ...");
+
+            // 2. 啟動同步計時器
             _liveTimer?.Kill();
-            _liveTimer = AddTimer(Config.Live_Execute_Delay, () => 
+            _liveTimer = AddTimer(1.0f, () => 
             {
-                Server.NextFrame(() => { 
-                    Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
-                });
-                _liveTimer = null;
-            });
+                if (countdown > 0)
+                {
+                    // 夾心排版，紅字倒數
+                    string countdownHtml = $"<b><font class='fontSize-l' color='red'>- 倒 數  {countdown}  秒 -</font></b><br>";
+                    ShowHud($"{precompiledLine1}{countdownHtml}{precompiledLine2}", 1.1f); 
+                    
+                    // 播放音效
+                    foreach (var p in _serverPlayersCache)
+                    {
+                        if (p is { IsValid: true, IsBot: false }) p.ExecuteClientCommand(popupSoundCmd);
+                    }
+                    countdown--; 
+                }
+                else
+                {
+                    // 正式開賽廣播與後台訊息
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
+                    if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
+                    
+                    // 夾心排版，綠字開戰，秒數精準綁定設定檔
+                    string goHtml = $"<b><font class='fontSize-l' color='lime'>★ 正 式 開 戰 ★</font></b><br>";
+                    ShowHud($"{precompiledLine1}{goHtml}{precompiledLine2}", Config.HudDuration_MatchStart);
+                    
+                    // 播放音效
+                    foreach (var p in _serverPlayersCache)
+                    {
+                        if (p is { IsValid: true, IsBot: false }) p.ExecuteClientCommand(popupSoundCmd);
+                    }
+
+                    // 執行 live.cfg 刷新比賽
+                    Server.NextFrame(() => { 
+                        Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
+                    });
+                    
+                    _liveTimer?.Kill();
+                    _liveTimer = null;
+                }
+            }, TimerFlags.REPEAT);
         }
     }
 
