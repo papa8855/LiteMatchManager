@@ -1028,7 +1028,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string[] precompiledHuds = new string[countdown + 1];
             for (int i = 1; i <= countdown; i++)
             {
-                string countdownHtml = $"<b>➡➡➡<font class='fontSize-l' color='red'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='red'>  秒 </font>⬅⬅⬅</b><br>";
+                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='red'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='red'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
             }
 
@@ -1041,7 +1041,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (countdown > 0)
                 {
                     // 這裡變成純 O(1) 陣列讀取，沒有任何運算負擔與字串生成！
-                    ShowHud(precompiledHuds[countdown], 0.90f); 
+                    ShowHud(precompiledHuds[countdown], 1.0f); 
                     
                     // 音效同步，使用預先快取的玩家名單，防 GetPlayers() 造成的卡頓
                     foreach (var p in _serverPlayersCache)
