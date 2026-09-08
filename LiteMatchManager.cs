@@ -1022,9 +1022,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             
             const string popupSoundCmd = "play sounds/ui/panorama/popup_reveal_01.vsnd";
             
-            // 【關鍵修改】：直接把你設定檔裡的 HudDuration_MatchStart (3秒) 拿來當作倒數秒數！
+            // 直接把你設定檔裡的 HudDuration_MatchStart (3秒) 拿來當作倒數秒數
             int countdown = (int)Config.HudDuration_MatchStart; 
-            if (countdown <= 0) countdown = 3; // 防呆機制，避免設定檔寫錯導致沒倒數
+            if (countdown <= 0) countdown = 3; // 防呆機制
+
+            // 【防洗頻優化】：將起頭廣播放在計時器外
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！進 入 倒 數 ...");
 
             // 2. 啟動同步計時器
             _liveTimer?.Kill();
@@ -1032,14 +1035,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             {
                 if (countdown > 0)
                 {
-                    // A. 廣播同步 (同進同出)
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.Red}{countdown}{ChatColors.White} 秒 ...");
+                    // HUD 同步：把你原本的 Line1、Line2 跟倒數紅字綁在一起顯示
+                    string countdownHtml = $"<b>➡➡➡<font class='fontSize-l' color='red'> 倒 數  </font><font class='fontSize-l' color='lime'>{countdown}</font><font class='fontSize-l' color='red'>  秒 </font>⬅⬅⬅</b><br>";
+                    ShowHud($"{precompiledLine1}{countdownHtml}{precompiledLine2}", 0.90f); 
                     
-                    // B. HUD 同步：把你原本的 Line1、Line2 跟倒數紅字綁在一起顯示
-                    string countdownHtml = $"<b><font class='fontSize-l' color='red'>- 倒 數  {countdown}  秒 -</font></b><br>";
-                    ShowHud($"{precompiledLine1}{countdownHtml}{precompiledLine2}", 1.1f); 
-                    
-                    // C. 音效同步
+                    // 音效同步
                     foreach (var p in _serverPlayersCache)
                     {
                         if (p is { IsValid: true, IsBot: false }) p.ExecuteClientCommand(popupSoundCmd);
@@ -1048,10 +1048,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 }
                 else
                 {
-                    // 倒數結束 (0 秒)，【不囉嗦，直接開戰】
+                    // 【正式開賽廣播與後台訊息】
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
                     if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
 
-                    // 直接執行 live.cfg 刷新比賽！
+                    // 倒數結束 (0 秒)，直接執行 live.cfg 刷新比賽！
                     Server.NextFrame(() => { 
                         Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
                     });
