@@ -1031,11 +1031,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             for (int i = 1; i <= countdown; i++)
             {
                 // HUD 畫面快取
-                string countdownHtml = $"<b>➡&#8201;&#8201;➡&#8201;&#8201;➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#FF5555'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅&#8201;&#8201;⬅&#8201;&#8201;⬅</b><br>";
+                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#FF5555'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
                 
                 // 聊天室廣播快取 (把 3、2、1 的紅字也準備好)
-                precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.Lime}{i}{ChatColors.White} 秒 ...";
+                precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.LightRed}{i}{ChatColors.White} 秒 ...";
             }
 
             // 第 0 秒瞬間：只發送準備提示，給玩家 0.5 秒心理準備
@@ -1047,7 +1047,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (countdown > 0)
                 {
                     // A. HUD 畫面同步
-                    ShowHud(precompiledHuds[countdown], 0.97f); 
+                    ShowHud(precompiledHuds[countdown], 0.96f); 
                     
                     // B. 聊天室 3、2、1 同步廣播 (直接讀取快取，0效能消耗)
                     Server.PrintToChatAll(precompiledChats[countdown]);
