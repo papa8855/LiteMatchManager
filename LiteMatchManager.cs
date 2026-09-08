@@ -1031,7 +1031,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             for (int i = 1; i <= countdown; i++)
             {
                 // HUD 畫面快取
-                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#FF5555'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
+                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#DF3935'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
                 
                 // 聊天室廣播快取 (把 3、2、1 的紅字也準備好)
