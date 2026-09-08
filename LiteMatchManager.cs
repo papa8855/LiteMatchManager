@@ -1005,7 +1005,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 }
             }
             
-            string modeText = totalPlayers == 2 ? "1 v 1 " : $"{activeT} v {activeCT} ";
+   string modeText = totalPlayers == 2 ? "1 v 1 " : $"{activeT} v {activeCT} ";
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
@@ -1015,7 +1015,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _waitingTimer?.Kill(); _waitingTimer = null;
             
             // ==========================================
-            // 【.NET 10 極致效能版：0 GC 預先快取與 0.5 秒緩衝】
+            // 【.NET 10 效能版：0.5秒緩衝 + 雙重0 GC快取 (包含聊天室321)】
             // ==========================================
             string precompiledLine1 = string.Format(Config.HudHtml_Round1_Line1, modeText);
             string precompiledLine2 = string.Format(Config.HudHtml_Round1_Line2, displayLimit);
@@ -1024,26 +1024,35 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             int countdown = (int)Config.HudDuration_MatchStart; 
             if (countdown <= 0) countdown = 3;
 
-            // 在計時器外，預先生成所有倒數秒數的 HUD 字串！
+            // HUD 與「聊天室廣播」雙重快取！
             string[] precompiledHuds = new string[countdown + 1];
+            string[] precompiledChats = new string[countdown + 1]; // 專門給聊天室用的陣列
+            
             for (int i = 1; i <= countdown; i++)
             {
-                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='red'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='red'>  秒 </font>⬅ ⬅ ⬅</b><br>";
+                // HUD 畫面快取
+                string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='lime'>{i}</font><font class='fontSize-l' color='red'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
+                
+                // 聊天室廣播快取 (把 3、2、1 的紅字也準備好)
+                precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.Lime}{i}{ChatColors.White} 秒 ...";
             }
 
-            // 廣播提示
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！進 入 倒 數 ...");
+            // 第 0 秒瞬間：只發送準備提示，給玩家 0.5 秒心理準備
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 雙 方 皆 已 準 備，即 將 開 戰 ...");
 
             // 2. 將倒數邏輯包裝成 Action
             Action tickLogic = () => 
             {
                 if (countdown > 0)
                 {
-                    // 這裡變成純 O(1) 陣列讀取，沒有任何運算負擔與字串生成！
-                    ShowHud(precompiledHuds[countdown], 1.0f); 
+                    // A. HUD 畫面同步
+                    ShowHud(precompiledHuds[countdown], 0.95f); 
                     
-                    // 音效同步，使用預先快取的玩家名單，防 GetPlayers() 造成的卡頓
+                    // B. 聊天室 3、2、1 同步廣播 (直接讀取快取，0效能消耗)
+                    Server.PrintToChatAll(precompiledChats[countdown]);
+                    
+                    // C. 音效同步
                     foreach (var p in _serverPlayersCache)
                     {
                         if (p is { IsValid: true, IsBot: false }) p.ExecuteClientCommand(popupSoundCmd);
@@ -1070,7 +1079,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _liveTimer?.Kill();
             _liveTimer = AddTimer(0.5f, () => 
             {
-                tickLogic(); // 0.5秒後觸發第一次
+                tickLogic(); // 0.5秒後觸發倒數 3
 
                 if (countdown >= 0) 
                 {
