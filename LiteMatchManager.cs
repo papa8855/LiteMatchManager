@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
 using System.Collections.Frozen; // 【.NET 10 升級】：引入凍結集合
-using System.IO; // 【新增】：用來讀取廣告黑名單 txt 檔案
 
 namespace LiteMatchManager;
 
@@ -128,9 +127,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private string _cachedPrefix = "";
     // 【.NET 10 升級】：集合表達式
     private List<string> _cachedGunMenuMessage = []; 
-    
-    // 【新增】：廣告防禦黑名單 (Ad Blacklist)
-    public string[] adBlacklist = [];
     
     private int _currentPhaseIndex = 0; 
     private int _phaseStartScoreT = 0;
@@ -351,8 +347,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         _isServerShuttingDown = false;
         
-        LoadAdBlacklist(); // 【新增】：載入廣告黑名單
-
         AddCommandListener("say", OnPlayerSay);
         AddCommandListener("say_team", OnPlayerSay);
         AddCommandListener("jointeam", OnJoinTeam);
@@ -362,71 +356,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
 
         RegisterEventHandler<EventMapShutdown>((@event, info) => { _isServerShuttingDown = true; return HookResult.Continue; });
-        // ▼▼▼ 新增：防禦機器人進場後「偷偷改名」的第二道防線 ▼▼▼
-        RegisterEventHandler<EventPlayerChangename>((@event, info) => {
-            var changedPlayer = @event.Userid;
-            string newName = @event.Newname;
 
-            if (changedPlayer is { IsValid: true, IsBot: false } && !string.IsNullOrEmpty(newName) && adBlacklist.Length > 0)
-            {
-                bool isAdName = false;
-                foreach (var ad in adBlacklist)
-                {
-                    if (newName.Contains(ad, StringComparison.OrdinalIgnoreCase))
-                    {
-                        isAdName = true;
-                        break;
-                    }
-                }
-
-               if (isAdName)
-                {
-                    Console.WriteLine($"[廣告防禦] 偵測到違規改名，瞬間 Ban 掉: {newName} (SteamID: {changedPlayer.SteamID})");
-                    
-                    // 新增：全伺服器公開廣播
-                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{newName} {ChatColors.White}已 被 永 久 封 鎖");
-                    
-                    Server.ExecuteCommand($"css_addban {changedPlayer.SteamID} 0 \"廣告機器人\"");
-                    
-                    // 新增：順便補上一腳瞬間踢出，雙重保險
-                    Server.ExecuteCommand($"kickid {changedPlayer.UserId} \"Ban_Ads\"");
-                }
-            }
-            return HookResult.Continue;
-        });
-        // ▲▲▲ 第二道防線結束 ▲▲▲
-
-     // ▼▼▼ 新增：廣告防禦門神 (進場名稱秒踢與永久封鎖) ▼▼▼
-        RegisterEventHandler<EventPlayerConnectFull>((@event, info) => {
-            var player = @event.Userid;
-
-            if (player is { IsValid: true, IsBot: false } && !string.IsNullOrEmpty(player.PlayerName) && adBlacklist.Length > 0)
-            {
-                bool isAdName = false;
-                foreach (var ad in adBlacklist)
-                {
-                    if (player.PlayerName.Contains(ad, StringComparison.OrdinalIgnoreCase))
-                    {
-                        isAdName = true;
-                        break;
-                    }
-                }
-
-                if (isAdName)
-                {
-                    Console.WriteLine($"[廣告防禦] 偵測到違規名稱，進場秒 Ban: {player.PlayerName} (SteamID: {player.SteamID})");
-                    
-                    // 新增：全伺服器公開廣播
-                    Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 被 永 久 封 鎖");
-                    
-                    Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\""); 
-                    Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\""); 
-                    return HookResult.Continue;
-                }
-            }
-            return HookResult.Continue;
-        });
-        // ▲▲▲ 新增結束 ▲▲▲
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
             if (@event.Userid is { SteamID: > 0 } player)
@@ -548,7 +478,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                             {
                                 int liveTeamMax = _liveMatchTargetPlayers / 2;
                                 int currentCount = 0;
-                                foreach (var p in Utilities.GetPlayers())
+                                foreach (var p in _serverPlayersCache)
                                 {
                                     if (p is { IsValid: true, IsBot: false, TeamNum: var team } && team == newTeam && p.SteamID != steamId)
                                         currentCount++;
@@ -577,7 +507,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     {
                         // 3. 非比賽期間：檢查是否超過滿員設定
                         int currentTeamCount = 0;
-                        foreach (var p in Utilities.GetPlayers())
+                        foreach (var p in _serverPlayersCache)
                         {
                             if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: var team } && team == newTeam && p.SteamID != steamId)
                                 currentTeamCount++;
@@ -628,7 +558,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     private int GetDynamicRequiredPlayers()
     {
         int activeT = 0, activeCT = 0;
-        foreach (var p in Utilities.GetPlayers())
+        foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false })
             {
@@ -649,7 +579,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_isServerShuttingDown || !_isMatchLive || IsMatchOver()) return; 
         
         int activeT = 0, activeCT = 0;
-        foreach (var p in Utilities.GetPlayers())
+        foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false })
             {
@@ -704,7 +634,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             string nameT = "恐怖份子";
             string nameCT = "反恐小組";
-            foreach (var p in Utilities.GetPlayers())
+            foreach (var p in _serverPlayersCache)
             {
                 if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 2 }) nameT = p.PlayerName;
                 else if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 3 }) nameCT = p.PlayerName;
@@ -756,41 +686,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         string rawArg = info.GetArg(1);
         if (string.IsNullOrWhiteSpace(rawArg)) return HookResult.Continue;
 
-       // ▼▼▼ 新增：廣告防禦門神 (文字與名稱雙重黑洞吞噬 + SteamID 絕殺) ▼▼▼
-        if (adBlacklist.Length > 0)
-        {
-            bool isSpam = false;
-            string playerName = player.PlayerName ?? "";
-
-            foreach (var ad in adBlacklist)
-            {
-                // 【終極防護】：只要「講的話(rawArg)」或「名字(playerName)」其中一個有廣告，直接判定為洗頻！
-                if (rawArg.Contains(ad, StringComparison.OrdinalIgnoreCase) || 
-                    playerName.Contains(ad, StringComparison.OrdinalIgnoreCase))
-                {
-                    isSpam = true;
-                    break;
-                }
-            }
-
-           if (isSpam)
-            {
-                Console.WriteLine($"[廣告防禦] 攔截到洗頻或廣告名稱，直接吞掉: {playerName} 說了 {rawArg}");
-                
-                // 新增：全伺服器公開廣播
-                Server.PrintToChatAll($" {_cachedPrefix} 偵 測 到 廣 告 機 器 人 {ChatColors.Gold}{playerName} {ChatColors.White}已 被 永 久 封 鎖");
-                
-                // 【絕對擊殺】：直接使用 SteamID 進行封鎖，確保 SimpleAdmin 100% 看得懂指令
-                Server.ExecuteCommand($"css_addban {player.SteamID} 0 \"廣告機器人\"");
-                
-                // 補上一腳原生踢除，雙重保險確保牠瞬間消失
-                Server.ExecuteCommand($"kickid {player.UserId} \"Ban_Ads\"");
-                
-                return HookResult.Handled; 
-            }
-        }
-        // ▲▲▲ 新增結束 ▲▲▲
-
         bool isCommand = false;
         for (int i = 0; i < rawArg.Length; i++)
         {
@@ -809,7 +704,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string nameColor = player.TeamNum switch { 1 => $"{ChatColors.Grey}", 2 => "\x10", 3 => "\x0B", _ => $"{ChatColors.White}" };
             string formattedMessage = $" {ChatColors.White}[所有人]{ChatColors.White} {nameColor}{playerName}{ChatColors.White}：{message}";
 
-            foreach (var p in Utilities.GetPlayers()) if (p is { IsValid: true, IsBot: false }) p.PrintToChat(formattedMessage);
+            // ✅ 將 Utilities.GetPlayers() 替換為 0 GC 高效能快取
+            foreach (var p in _serverPlayersCache) if (p is { IsValid: true, IsBot: false }) p.PrintToChat(formattedMessage);
             return HookResult.Handled; 
         }
 
@@ -932,7 +828,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (!_isMatchLive)
         {
             int activePlayers = 0;
-            foreach (var p in Utilities.GetPlayers()) if (p is { IsValid: true, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 }) activePlayers++;
+            foreach (var p in _serverPlayersCache) if (p is { IsValid: true, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 }) activePlayers++;
             if (activePlayers > 0 && activePlayers == _readyPlayers.Count)
             {
                 BroadcastWaitingMessage();
@@ -968,7 +864,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (_isMatchLive) return;
 
         int activeT = 0, activeCT = 0;
-        foreach (var p in Utilities.GetPlayers())
+        foreach (var p in _serverPlayersCache)
         {
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false })
             {
@@ -994,7 +890,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _lockedTeam.Clear(); // 清空舊名冊
             
             // 【產生名冊鎖】：開賽瞬間紀錄所有存活玩家的隊伍
-            foreach (var p in Utilities.GetPlayers())
+            foreach (var p in _serverPlayersCache)
             {
                 if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
                 {
@@ -1344,64 +1240,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         ShowHud(fullHudHtml, Config.RoundStartHudDuration);
 
         return HookResult.Continue;
-    }
-
-    // =========================================================================
-    // 載入廣告黑名單 (Ad Blacklist Loader)
-    // =========================================================================
-    private void LoadAdBlacklist()
-    {
-        // 完美鎖定 CS# 設定檔資料夾 (與 LiteMatchManager.json 同位子)
-        string directoryPath = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "configs", "plugins", "LiteMatchManager"));
-        string filePath = Path.Combine(directoryPath, "ad_blacklist.txt");
-
-        if (File.Exists(filePath))
-        {
-            try
-            {
-                var lines = File.ReadAllLines(filePath);
-                List<string> validLines = [];
-                foreach (var line in lines)
-                {
-                    // 【.NET 10 升級】：Span 零分配切片與驗證
-                    var trimmed = line.AsSpan().Trim();
-                    if (!trimmed.IsEmpty && !trimmed.StartsWith("//"))
-                    {
-                        validLines.Add(trimmed.ToString());
-                    }
-                }
-                // 【.NET 10 升級】：集合表達式轉換
-                adBlacklist = [.. validLines];
-                Console.WriteLine($"[LoadAdBlacklist] 成功載入 {adBlacklist.Length} 筆廣告黑名單。");
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"[LoadAdBlacklist FATAL] 讀取黑名單時發生錯誤: {e.Message}");
-            }
-        }
-        else
-        {
-            Console.WriteLine("[LoadAdBlacklist] 黑名單檔案不存在，建立預設檔案。");
-            try
-            {
-                if (!Directory.Exists(directoryPath))
-                {
-                    Directory.CreateDirectory(directoryPath);
-                }
-                // 預設寫入常見廣告，加上教學註解
-                File.WriteAllLines(filePath, [
-                    "// 在下方加入要封鎖的廣告網址或關鍵字 (一行一個)", 
-                    "// 系統會自動忽略 // 開頭的註解與空白行",
-                    "cs2commends", 
-                    "cs2commends.com"
-                ]);
-                adBlacklist = ["cs2commends", "cs2commends.com"];
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"[LoadAdBlacklist FATAL] 建立黑名單檔案時發生錯誤: {e.Message}");
-            }
-        }
     }
 
     public override void Unload(bool hotReload)
