@@ -1092,7 +1092,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             });
         }
     }
-    private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
         
@@ -1114,7 +1114,18 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
                 if (player.TeamNum is not 2 and not 3) return;
 
-                player.RemoveWeapons(); 
+                // 🌟 【核心修復】：不再盲目呼叫原生的 RemoveWeapons，改用安全檢查與手動卸除，避開 CS2 引擎崩潰 Bug
+                if (pawn.WeaponServices?.MyWeapons is { } weapons)
+                {
+                    foreach (var weaponHandle in weapons)
+                    {
+                        if (weaponHandle.Value is { IsValid: true } weapon)
+                        {
+                            weapon.Remove();
+                        }
+                    }
+                }
+                // 🌟 修復結束
                 
                 if (_isMatchLive && Config.MatchModes.Count > _currentPhaseIndex)
                 {
