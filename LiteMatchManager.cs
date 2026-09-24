@@ -178,6 +178,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
+    private float _lastHudUpdateTime = 0f; // 🌟 解決 HUD 封包溢位的新增變數
 
     private string ReplaceColorTags(string input)
     {
@@ -279,9 +280,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
             {
-                foreach (var p in _serverPlayersCache)
+                // 🌟 【核心修復】：加上 1 秒鐘冷卻限制，防止 HUD 封包塞爆引擎緩衝區，解決 !R 被踢出問題
+                if (Server.CurrentTime - _lastHudUpdateTime >= 1.0f)
                 {
-                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
+                    _lastHudUpdateTime = Server.CurrentTime;
+                    foreach (var p in _serverPlayersCache)
+                    {
+                        if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
+                    }
                 }
             }
             else
@@ -431,42 +437,55 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
         {
-            if (@event.Userid is { SteamID: > 0 } player)
+            try
             {
-                ulong steamId = player.SteamID;
-                string pName = player.PlayerName;
-
-                if (_isMatchLive && _readyPlayers.Contains(steamId))
+                // 🌟 【核心修復】：加入 IsValid 檢查，防止讀取到已銷毀的實體引發溢位錯誤
+                if (@event.Userid is { IsValid: true, SteamID: > 0 } player)
                 {
-                    _readyPlayers.Remove(steamId);
-                    _lockedTeam.Remove(steamId); // 釋放名冊鎖
+                    ulong steamId = player.SteamID;
+                    string pName = player.PlayerName;
 
-                    if (IsMatchOver()) return HookResult.Continue;
-
-                    if (_liveMatchTargetPlayers == 2)
+                    if (_isMatchLive && _readyPlayers.Contains(steamId))
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.White}斷 線，比 賽 強 制 終 止");
-                        Server.NextFrame(AbortMatch); // 【防記憶體報錯】必須包裝在 NextFrame 內
+                        _readyPlayers.Remove(steamId);
+                        _lockedTeam.Remove(steamId); // 釋放名冊鎖
+
+                        if (IsMatchOver()) 
+                        {
+                            Server.NextFrame(RefreshActivePlayers);
+                            return HookResult.Continue;
+                        }
+
+                        if (_liveMatchTargetPlayers == 2)
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.White}斷 線，比 賽 強 制 終 止");
+                            Server.NextFrame(AbortMatch); // 【防記憶體報錯】必須包裝在 NextFrame 內
+                        }
+                        else
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位");
+                            Server.NextFrame(CheckPhaseWin); 
+                        }
                     }
                     else
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.Orange}斷 線，已 釋 出 名 額，開 放 補 位");
-                        Server.NextFrame(CheckPhaseWin); 
+                        _readyPlayers.Remove(steamId);
+                        _lockedTeam.Remove(steamId);
+                        _playerUnreadyTime.Remove(steamId);
+                        _playerJoinTime.Remove(steamId); 
+                        _playerPrimary.Remove(steamId);
+                        _playerSecondary.Remove(steamId);
+                        _pendingInitialReminders.Remove(steamId);
+                        _hasReceivedInitialReminder.Remove(steamId);
+                        if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
                     }
                 }
-                else
-                {
-                    _readyPlayers.Remove(steamId);
-                    _lockedTeam.Remove(steamId);
-                    _playerUnreadyTime.Remove(steamId);
-                    _playerJoinTime.Remove(steamId); 
-                    _playerPrimary.Remove(steamId);
-                    _playerSecondary.Remove(steamId);
-                    _pendingInitialReminders.Remove(steamId);
-                    _hasReceivedInitialReminder.Remove(steamId);
-                    if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
-                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LiteMatchManager] 攔截到斷線溢位錯誤: {ex.Message}");
+            }
+
             Server.NextFrame(RefreshActivePlayers);
             return HookResult.Continue;
         });
@@ -1092,7 +1111,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             });
         }
     }
-private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+    private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
         
@@ -1114,11 +1133,24 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
                 // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
                 if (player.TeamNum is not 2 and not 3) return;
 
-                // 🌟 【真正的完美修復】：使用 CSS 安全的原生 API，並加上嚴格的 WeaponServices 檢查！
-                // 這樣能避開「手動 Remove 導致的進服閃退」，同時解決「沒拿槍直接 !R 導致的引擎崩潰」
+                // 🌟 【最終完美修復】：先存入 List 暫存區，再進行安全刪除
                 if (pawn.WeaponServices != null && pawn.WeaponServices.MyWeapons != null)
                 {
-                    player.RemoveWeapons(); 
+                    List<CBasePlayerWeapon> weaponsToRemove = new List<CBasePlayerWeapon>();
+                    foreach (var weaponHandle in pawn.WeaponServices.MyWeapons)
+                    {
+                        if (weaponHandle.Value != null && weaponHandle.Value.IsValid)
+                        {
+                            weaponsToRemove.Add(weaponHandle.Value);
+                        }
+                    }
+                    foreach (var weapon in weaponsToRemove)
+                    {
+                        if (weapon != null && weapon.IsValid)
+                        {
+                            weapon.Remove();
+                        }
+                    }
                 }
                 
                 if (_isMatchLive && Config.MatchModes.Count > _currentPhaseIndex)
