@@ -1114,18 +1114,12 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
                 // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
                 if (player.TeamNum is not 2 and not 3) return;
 
-                // 🌟 【核心修復】：不再盲目呼叫原生的 RemoveWeapons，改用安全檢查與手動卸除，避開 CS2 引擎崩潰 Bug
-                if (pawn.WeaponServices?.MyWeapons is { } weapons)
+                // 🌟 【真正的完美修復】：使用 CSS 安全的原生 API，並加上嚴格的 WeaponServices 檢查！
+                // 這樣能避開「手動 Remove 導致的進服閃退」，同時解決「沒拿槍直接 !R 導致的引擎崩潰」
+                if (pawn.WeaponServices != null && pawn.WeaponServices.MyWeapons != null)
                 {
-                    foreach (var weaponHandle in weapons)
-                    {
-                        if (weaponHandle.Value is { IsValid: true } weapon)
-                        {
-                            weapon.Remove();
-                        }
-                    }
+                    player.RemoveWeapons(); 
                 }
-                // 🌟 修復結束
                 
                 if (_isMatchLive && Config.MatchModes.Count > _currentPhaseIndex)
                 {
