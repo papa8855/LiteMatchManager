@@ -824,9 +824,18 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             TriggerMapChange(); return HookResult.Handled; 
         }
 
-        if (_readyCommandsSet.Contains(command))
+       if (_readyCommandsSet.Contains(command))
         {
-            if (!_isMatchLive) HandlePlayerReady(player);
+            if (!_isMatchLive) 
+            {
+                // 【治本完美解法】：將 !R 指令的處理推遲一幀，完美錯開重生裝備載入的 Tick 衝突
+                Server.NextFrame(() => {
+                    if (player is { IsValid: true })
+                    {
+                        HandlePlayerReady(player);
+                    }
+                });
+            }
             return HookResult.Continue; 
         }
         else if (command == "unready")
