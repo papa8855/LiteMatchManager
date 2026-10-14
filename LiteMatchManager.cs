@@ -15,7 +15,7 @@ namespace LiteMatchManager;
 
 #pragma warning disable CS8618
 
-// ==========================================
+// =========================================
 // 階段對戰 (Phase) 專用設定類別
 // ==========================================
 public class DuelModeConfig
