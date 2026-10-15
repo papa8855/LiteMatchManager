@@ -507,7 +507,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                                 {
                                     _readyPlayers.Add(steamId);
                                     _lockedTeam[steamId] = newTeam; // 補位成功，寫入名冊鎖
-                                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 加 入 團 戰 比 賽");
+                                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 入 團 戰 比 賽");
                                 }
                             }
                         }
