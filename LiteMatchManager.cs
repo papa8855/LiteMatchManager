@@ -1161,50 +1161,54 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
         
-        if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return HookResult.Continue;
-        
-        // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
-        if (player.TeamNum is not 2 and not 3) return HookResult.Continue;
+        Server.NextFrame(() => {
+            Server.NextFrame(() => {
+                if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
+                
+                // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
+                if (player.TeamNum is not 2 and not 3) return;
 
-        player.RemoveWeapons(); 
-        
-        if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
-        {
-            var phase = Config.MatchModes[_currentPhaseIndex];
-            
-            pawn.Health = phase.Health;
-            
-            if (phase.Armor == 0) { pawn.ArmorValue = 0; }
-            else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
-            else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
-
-            player.GiveNamedItem("weapon_knife"); 
-
-            string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
-            if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
-                secToGive = prefSec;
-            if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
-
-            string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
-            if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
-                priToGive = prefPri;
-            if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
-
-            if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
-        }
-        else
-        {
-            bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
-            for (int i = 0; i < Config.SpawnWeapons.Count; i++) 
-            { 
-                string weaponToGive = Config.SpawnWeapons[i];
-                if (hasPrefPri && i < _spawnWeaponIsReplaceable.Length && _spawnWeaponIsReplaceable[i])
+                player.RemoveWeapons(); 
+                
+                if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
                 {
-                    weaponToGive = prefPri!;
+                    var phase = Config.MatchModes[_currentPhaseIndex];
+                    
+                    pawn.Health = phase.Health;
+                    
+                    if (phase.Armor == 0) { pawn.ArmorValue = 0; }
+                    else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
+                    else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
+
+                    player.GiveNamedItem("weapon_knife"); 
+
+                    string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
+                    if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
+                        secToGive = prefSec;
+                    if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
+
+                    string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
+                    if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
+                        priToGive = prefPri;
+                    if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
+
+                    if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
                 }
-                player.GiveNamedItem(weaponToGive); 
-            }
-        }
+                else
+                {
+                    bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
+                    for (int i = 0; i < Config.SpawnWeapons.Count; i++) 
+                    { 
+                        string weaponToGive = Config.SpawnWeapons[i];
+                        if (hasPrefPri && i < _spawnWeaponIsReplaceable.Length && _spawnWeaponIsReplaceable[i])
+                        {
+                            weaponToGive = prefPri!;
+                        }
+                        player.GiveNamedItem(weaponToGive); 
+                    }
+                }
+            });
+        });
         
         return HookResult.Continue;
     }
