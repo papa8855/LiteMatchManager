@@ -1146,7 +1146,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+    private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
         
@@ -1161,14 +1161,11 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
             }
         }
         
-        // ==========================================
-        //  【直接發槍：無延遲，一復活瞬間到位】
-        // ==========================================
-        if (player is { IsValid: true, PawnIsAlive: true } && player.PlayerPawn.Value is { IsValid: true } pawn)
-        {
-            // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
-            if (player.TeamNum is 2 or 3)
-            {
+                if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
+                
+                // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
+                if (player.TeamNum is not 2 and not 3) return;
+
                 player.RemoveWeapons(); 
                 
                 if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
@@ -1208,8 +1205,8 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
                         player.GiveNamedItem(weaponToGive); 
                     }
                 }
-            }
-        }
+            });
+        });
         
         return HookResult.Continue;
     }
