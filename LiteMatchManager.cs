@@ -122,7 +122,7 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.35_ZeroSpike_AntiJitter";
+    public override string ModuleVersion => "9.36_ZeroSpike_AntiJitter";
     public override string ModuleAuthor => "Optimized";
     public override string ModuleDescription => "原生30勝換圖";
 
@@ -1161,56 +1161,126 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
         
-        // 只保留單層 NextFrame，發槍順序 100% 維持原樣不動
+        // 單層 NextFrame 結合智慧武器比對：同模式相符直接保留（0拔槍動畫），跨模式自動切換，護甲每回合穩定重發
         Server.NextFrame(() => {
             if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
             
             // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
             if (player.TeamNum is not 2 and not 3) return;
 
-            player.RemoveWeapons(); 
+            // 掃描玩家身上目前持有的武器狀態 (0-GC)
+            string currentPri = "";
+            string currentSec = "";
+            bool hasKnife = false;
+
+            if (pawn.WeaponServices?.MyWeapons is { } weapons)
+            {
+                foreach (var weaponHandle in weapons)
+                {
+                    if (weaponHandle.Value is { IsValid: true } w && !string.IsNullOrEmpty(w.DesignerName))
+                    {
+                        string wName = w.DesignerName;
+                        if (wName.Contains("knife") || wName.Contains("bayonet"))
+                        {
+                            hasKnife = true;
+                        }
+                        else if (PistolWeapons.Contains(wName))
+                        {
+                            currentSec = wName;
+                        }
+                        else if (wName.StartsWith("weapon_") && !wName.Contains("c4"))
+                        {
+                            currentPri = wName;
+                        }
+                    }
+                }
+            }
             
             if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
             {
                 var phase = Config.MatchModes[_currentPhaseIndex];
                 
                 pawn.Health = phase.Health;
-                
-                if (phase.Armor == 0) { pawn.ArmorValue = 0; }
-                else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
-                else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
 
-                player.GiveNamedItem("weapon_knife"); 
-
+                // 決定當前階段應該持有的副武器（手槍）與主武器（優先讀取玩家指令記憶，如 !dg）
                 string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
                 if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
                     secToGive = prefSec;
-                if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
 
                 string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
                 if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
                     priToGive = prefPri;
-                if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
+
+                bool priMatches = string.Equals(currentPri, priToGive, StringComparison.OrdinalIgnoreCase);
+                bool secMatches = string.Equals(currentSec, secToGive, StringComparison.OrdinalIgnoreCase);
+
+                // 只有當身上武器與當前模式（或記憶武器）不符時，才執行清除與重發；相符則直接保留武器，徹底消除重複拔槍動畫
+                if (!hasKnife || !priMatches || !secMatches)
+                {
+                    player.RemoveWeapons(); 
+                    player.GiveNamedItem("weapon_knife"); 
+                    if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
+                    if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
+                }
+
+                // 護甲維持每回合穩定重新發放，確保對戰數值公平
+                if (phase.Armor == 0) { pawn.ArmorValue = 0; }
+                else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
+                else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
 
                 if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
             }
             else
             {
+                // 暖身模式：計算目標武器並智慧比對保留
                 bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
-                for (int i = 0; i < Config.SpawnWeapons.Count; i++) 
-                { 
-                    string weaponToGive = Config.SpawnWeapons[i];
-                    if (hasPrefPri && i < _spawnWeaponIsReplaceable.Length && _spawnWeaponIsReplaceable[i])
+                bool hasPrefSec = _playerSecondary.TryGetValue(steamId, out string? prefSec);
+
+                string targetWarmupPri = "";
+                string targetWarmupSec = "";
+                bool giveAssaultSuit = false;
+
+                for (int i = 0; i < Config.SpawnWeapons.Count; i++)
+                {
+                    string item = Config.SpawnWeapons[i];
+                    if (item.Equals("item_assaultsuit", StringComparison.OrdinalIgnoreCase) || item.Equals("item_kevlar", StringComparison.OrdinalIgnoreCase))
                     {
-                        weaponToGive = prefPri!;
+                        giveAssaultSuit = true;
+                        continue;
                     }
-                    player.GiveNamedItem(weaponToGive); 
+                    if (item.Contains("knife") || item.Contains("bayonet")) continue;
+
+                    if (PistolWeapons.Contains(item))
+                    {
+                        targetWarmupSec = hasPrefSec ? prefSec! : item;
+                    }
+                    else if (item.StartsWith("weapon_"))
+                    {
+                        targetWarmupPri = hasPrefPri ? prefPri! : item;
+                    }
+                }
+
+                bool priMatches = string.Equals(currentPri, targetWarmupPri, StringComparison.OrdinalIgnoreCase);
+                bool secMatches = string.Equals(currentSec, targetWarmupSec, StringComparison.OrdinalIgnoreCase);
+
+                if (!hasKnife || !priMatches || !secMatches)
+                {
+                    player.RemoveWeapons();
+                    player.GiveNamedItem("weapon_knife");
+                    if (!string.IsNullOrEmpty(targetWarmupSec)) player.GiveNamedItem(targetWarmupSec);
+                    if (!string.IsNullOrEmpty(targetWarmupPri)) player.GiveNamedItem(targetWarmupPri);
+                }
+
+                if (giveAssaultSuit)
+                {
+                    player.GiveNamedItem("item_assaultsuit");
                 }
             }
         });
         
         return HookResult.Continue;
     }
+
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
         if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons is not { } weapons) return;
