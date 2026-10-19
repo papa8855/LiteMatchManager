@@ -1161,55 +1161,65 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
         
-        // 只保留單層 NextFrame，發槍順序 100% 維持原樣不動
+        // 使用單一 NextFrame 確保 Pawn 已經完全生成且 IsAlive 生效，解決 0 幀抓不到 Pawn 的問題
         Server.NextFrame(() => {
-            if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
-            
-            // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
-            if (player.TeamNum is not 2 and not 3) return;
-
-            player.RemoveWeapons(); 
-            
-            if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
-            {
-                var phase = Config.MatchModes[_currentPhaseIndex];
-                
-                pawn.Health = phase.Health;
-                
-                if (phase.Armor == 0) { pawn.ArmorValue = 0; }
-                else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
-                else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
-
-                player.GiveNamedItem("weapon_knife"); 
-
-                string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
-                if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
-                    secToGive = prefSec;
-                if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
-
-                string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
-                if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
-                    priToGive = prefPri;
-                if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
-
-                if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
-            }
-            else
-            {
-                bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
-                for (int i = 0; i < Config.SpawnWeapons.Count; i++) 
-                { 
-                    string weaponToGive = Config.SpawnWeapons[i];
-                    if (hasPrefPri && i < _spawnWeaponIsReplaceable.Length && _spawnWeaponIsReplaceable[i])
-                    {
-                        weaponToGive = prefPri!;
-                    }
-                    player.GiveNamedItem(weaponToGive); 
-                }
-            }
+            ExecuteSpawnWeapons(player, steamId);
         });
         
         return HookResult.Continue;
+    }
+
+    // 共用的發槍核心邏輯
+    private void ExecuteSpawnWeapons(CCSPlayerController player, ulong steamId)
+    {
+        if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
+        
+        // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
+        if (player.TeamNum is not 2 and not 3) return;
+
+        // 非比賽期間才需要強制清空保險；正式比賽由 live.cfg 統一清空
+        if (!_isMatchLive)
+        {
+            player.RemoveWeapons(); 
+        }
+        
+        if (_isMatchLive && !_isCountdownActive && Config.MatchModes.Count > _currentPhaseIndex)
+        {
+            var phase = Config.MatchModes[_currentPhaseIndex];
+            
+            pawn.Health = phase.Health;
+            
+            if (phase.Armor == 0) { pawn.ArmorValue = 0; }
+            else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
+            else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
+
+            player.GiveNamedItem("weapon_knife"); 
+
+            string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
+            if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
+                secToGive = prefSec;
+            if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
+
+            string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
+            if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
+                priToGive = prefPri;
+            if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
+
+            if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
+        }
+        else
+        {
+            bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
+            for (int i = 0; i < Config.SpawnWeapons.Count; i++) 
+            { 
+                string weaponToGive = Config.SpawnWeapons[i];
+                if (hasPrefPri && i < _spawnWeaponIsReplaceable.Length && _spawnWeaponIsReplaceable[i])
+                {
+                    weaponToGive = prefPri!;
+                }
+                player.GiveNamedItem(weaponToGive); 
+            }
+        }
     }
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
