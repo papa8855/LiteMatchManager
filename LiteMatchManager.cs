@@ -1160,20 +1160,11 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
                 _playerJoinTime[steamId] = Server.CurrentTime; 
             }
         }
-
-        // 【核心優化分流】：
-        // 1. 正式比賽 (Live)：0 幀立刻直發！不延遲、不拔空槍，徹底根除死後復活的抽槍動畫抖動。
-        // 2. 暖身模式 (Warmup)：維持 1 幀延遲，確保暖身 cfg 的載入與原生預設槍衝突時不會只剩小刀。
-        if (_isMatchLive && !_isCountdownActive)
-        {
+        
+        // 使用單一 NextFrame 確保 Pawn 已經完全生成且 IsAlive 生效，解決 0 幀抓不到 Pawn 的問題
+        Server.NextFrame(() => {
             ExecuteSpawnWeapons(player, steamId);
-        }
-        else
-        {
-            Server.NextFrame(() => {
-                ExecuteSpawnWeapons(player, steamId);
-            });
-        }
+        });
         
         return HookResult.Continue;
     }
@@ -1186,7 +1177,7 @@ private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
         // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
         if (player.TeamNum is not 2 and not 3) return;
 
-        // 正式比賽因為 live.cfg 已清空預設槍，空手者直接發；若非正賽則先清空舊槍保險
+        // 非比賽期間才需要強制清空保險；正式比賽由 live.cfg 統一清空
         if (!_isMatchLive)
         {
             player.RemoveWeapons(); 
