@@ -1146,23 +1146,6 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
     }
 
-// 【核心修正】：解決 CS2 引擎將 USP 與 M4A1-S 的 DesignerName 回傳為 hkp2000 / m4a1 導致誤判重發的問題
-    private static string GetActualWeaponName(CBasePlayerWeapon weapon)
-    {
-        string dName = weapon.DesignerName;
-        if (string.IsNullOrEmpty(dName)) return "";
-
-        ushort defIndex = weapon.AttributeManager.Item.ItemDefinitionIndex;
-        return defIndex switch
-        {
-            60 => "weapon_m4a1_silencer", // M4A1-S
-            61 => "weapon_usp_silencer",  // USP-S
-            63 => "weapon_cz75a",         // CZ75-Auto
-            64 => "weapon_revolver",      // R8 Revolver
-            _ => dName
-        };
-    }
-
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
@@ -1178,13 +1161,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             }
         }
         
+        // 單層 NextFrame 結合智慧武器比對：同模式相符直接保留（0拔槍動畫），跨模式自動切換，護甲每回合穩定重發
         Server.NextFrame(() => {
             if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
             
             // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
             if (player.TeamNum is not 2 and not 3) return;
 
-            // 掃描玩家身上目前持有的武器真實名稱 (0-GC)
+            // 掃描玩家身上目前持有的武器狀態 (0-GC)
             string currentPri = "";
             string currentSec = "";
             bool hasKnife = false;
@@ -1193,11 +1177,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             {
                 foreach (var weaponHandle in weapons)
                 {
-                    if (weaponHandle.Value is { IsValid: true } w)
+                    if (weaponHandle.Value is { IsValid: true } w && !string.IsNullOrEmpty(w.DesignerName))
                     {
-                        string wName = GetActualWeaponName(w);
-                        if (string.IsNullOrEmpty(wName)) continue;
-
+                        string wName = w.DesignerName;
                         if (wName.Contains("knife") || wName.Contains("bayonet"))
                         {
                             hasKnife = true;
@@ -1220,7 +1202,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 
                 pawn.Health = phase.Health;
 
-                // 決定當前階段應該持有的副武器與主武器（優先讀取玩家指令記憶，如 !dg）
+                // 決定當前階段應該持有的副武器（手槍）與主武器（優先讀取玩家指令記憶，如 !dg）
                 string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
                 if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
                     secToGive = prefSec;
@@ -1232,8 +1214,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 bool priMatches = string.Equals(currentPri, priToGive, StringComparison.OrdinalIgnoreCase);
                 bool secMatches = string.Equals(currentSec, secToGive, StringComparison.OrdinalIgnoreCase);
 
-                // 【防崩潰關鍵】：同模式武器相符時，完全不碰武器（0拔槍動畫）；
-                // 一旦不符（跨模式或死掉重生），統一使用最安全的 player.RemoveWeapons() 卸載，絕不單獨呼叫 weapon.Remove() 造成 Entity 398 崩潰！
+                // 只有當身上武器與當前模式（或記憶武器）不符時，才執行清除與重發；相符則直接保留武器，徹底消除重複拔槍動畫
                 if (!hasKnife || !priMatches || !secMatches)
                 {
                     player.RemoveWeapons(); 
@@ -1242,7 +1223,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
                 }
 
-                // 護甲每回合穩定重發
+                // 護甲維持每回合穩定重新發放，確保對戰數值公平
                 if (phase.Armor == 0) { pawn.ArmorValue = 0; }
                 else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
                 else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
@@ -1302,36 +1283,38 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
-        // 【核心防崩潰】：將指令換槍的移除與發放整個推遲到 NextFrame 主執行緒安全階段執行，
-        // 避免在 OnPlayerSay 網路封包處理中途直接 Remove 實體導致 CopyExistingEntity 客戶端崩潰！
-        Server.NextFrame(() => {
-            if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value?.WeaponServices?.MyWeapons is not { } weapons) return;
+        if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons is not { } weapons) return;
 
-            bool isNewWeaponPistol = PistolWeapons.Contains(newWeapon);
+        bool isNewWeaponPistol = PistolWeapons.Contains(newWeapon);
 
-            foreach (var weaponHandle in weapons)
+        foreach (var weaponHandle in weapons)
+        {
+            if (weaponHandle.Value is { IsValid: true } weapon)
             {
-                if (weaponHandle.Value is { IsValid: true } weapon)
+                string wName = weapon.DesignerName;
+                if (string.IsNullOrEmpty(wName) || wName.Contains("knife") || wName.Contains("bayonet") || wName.Contains("c4")) continue;
+
+                bool isCurrentWeaponPistol = PistolWeapons.Contains(wName);
+
+                if (isNewWeaponPistol == isCurrentWeaponPistol)
                 {
-                    string wName = GetActualWeaponName(weapon);
-                    if (string.IsNullOrEmpty(wName) || wName.Contains("knife") || wName.Contains("bayonet") || wName.Contains("c4")) continue;
-
-                    // 若玩家手上已經是同一把槍（例如已經拿著 M4A1-S 又再打一次 !a1），直接不動作，省去拔槍且防止無謂的實體銷毀
-                    if (string.Equals(wName, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
-
-                    bool isCurrentWeaponPistol = PistolWeapons.Contains(wName);
-
-                    if (isNewWeaponPistol == isCurrentWeaponPistol)
-                    {
-                        weapon.AcceptInput("Kill");
-                        player.GiveNamedItem(newWeapon);
-                        return; 
-                    }
+                    weapon.Remove();
+                    Server.NextFrame(() => {
+                        if (player is { IsValid: true, PawnIsAlive: true }) player.GiveNamedItem(newWeapon);
+                    });
+                    return; 
                 }
             }
-
-            player.GiveNamedItem(newWeapon);
+        }
+        
+        // ▼▼▼ 核心效能修正：將同步發槍推遲到下一幀，徹底釋放 Input Handling 壓力 ▼▼▼
+        Server.NextFrame(() => {
+            if (player is { IsValid: true, PawnIsAlive: true }) 
+            {
+                player.GiveNamedItem(newWeapon);
+            }
         });
+        // ▲▲▲ 修復結束 ▲▲▲
     }
 
     private void OnGsCommand(CCSPlayerController player)
