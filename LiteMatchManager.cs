@@ -122,9 +122,9 @@ public class LiteMatchConfig : BasePluginConfig
 public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.36_ZeroSpike_AntiJitter";
+    public override string ModuleVersion => "9.37_ZeroDoubleDraw_AntiJitter";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖";
+    public override string ModuleDescription => "原生30勝換圖 (根除重複拿槍動畫版)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -250,6 +250,19 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             foreach (var line in config.GunMenuMessage)
             {
                 _cachedGunMenuMessage.Add(ReplaceColorTags(line));
+            }
+        }
+    }
+
+    // 【核心修正】：徹底移除工作坊單挑地圖內建的 game_player_equip 發槍實體，
+    // 阻斷地圖在第 0 幀偷塞 AK47 或洗掉玩家副武器導致的第 1 次錯誤拉槍動畫
+    private static void PurgeMapWeaponEntities()
+    {
+        foreach (var equip in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("game_player_equip"))
+        {
+            if (equip is { IsValid: true })
+            {
+                equip.Remove();
             }
         }
     }
@@ -579,6 +592,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         }, HookMode.Post);
 
+        // 【新增】：在每回合預備階段 (玩家重生前) 優先掃除地圖重生出來的 game_player_equip 發槍器
+        RegisterEventHandler<EventRoundPrestart>((@event, info) =>
+        {
+            PurgeMapWeaponEntities();
+            return HookResult.Continue;
+        }, HookMode.Pre);
+
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
         RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
@@ -596,12 +616,20 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _cvWarmupPauseTimer = ConVar.Find("mp_warmup_pausetimer");
 
             ResetMatchState();
-            Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
+            Server.NextFrame(() =>
+            {
+                PurgeMapWeaponEntities();
+                Server.ExecuteCommand($"exec {Config.WarmupConfigName}");
+            });
             
             Server.NextFrame(RefreshActivePlayers);
         });
 
-        Server.NextFrame(RefreshActivePlayers);
+        Server.NextFrame(() =>
+        {
+            PurgeMapWeaponEntities();
+            RefreshActivePlayers();
+        });
     }
 
     private int GetDynamicRequiredPlayers()
@@ -1121,8 +1149,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
                     if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
 
-                    // 刷新比賽
+                    // 刷新比賽並掃除地圖發槍實體
                     Server.NextFrame(() => { 
+                        PurgeMapWeaponEntities();
                         Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
                     });
                     
@@ -1163,6 +1192,64 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         };
     }
 
+    // 【零干擾差量配槍核心】：
+    // 1. 若上一局存活且武器完全符合 -> 0 動作 (0 拔槍動畫)
+    // 2. 若上一局陣亡重生 (身上僅有小刀，無錯誤主副武器) -> 絕不呼叫 RemoveWeapons() 洗掉小刀，直接以「先主武、後副武」順序補齊缺槍
+    // 3. 若跨階段或持有錯誤武器 -> 安全呼叫 RemoveWeapons() 後，同樣以「刀 -> 先主武 -> 後副武」順序一次到位
+    private static void ApplySmartLoadout(
+        CCSPlayerController player,
+        bool hasKnife,
+        string currentPri,
+        string currentSec,
+        int priCount,
+        int secCount,
+        string targetPri,
+        string targetSec)
+    {
+        bool priMatches = string.Equals(currentPri, targetPri, StringComparison.OrdinalIgnoreCase);
+        bool secMatches = string.Equals(currentSec, targetSec, StringComparison.OrdinalIgnoreCase);
+
+        bool hasWrongPri = (!string.IsNullOrEmpty(currentPri) && !priMatches) || priCount > 1;
+        bool hasWrongSec = (!string.IsNullOrEmpty(currentSec) && !secMatches) || secCount > 1;
+
+        if (!hasWrongPri && !hasWrongSec)
+        {
+            // 身上沒有任何錯誤武器（完全相符的贏家，或剛重生只有一把小刀的輸家）：直接差量補齊！
+            if (!hasKnife) player.GiveNamedItem("weapon_knife");
+            if (!priMatches && !string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
+            if (!secMatches && !string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
+        }
+        else
+        {
+            // 身上帶有舊階段或錯誤的武器：統一使用底層安全的 RemoveWeapons() 卸載，並先給主武器再給副武器
+            player.RemoveWeapons();
+            player.GiveNamedItem("weapon_knife");
+            if (!string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
+            if (!string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
+        }
+    }
+
+    // 【智慧護甲補發】：僅在護甲不滿 100 或缺少頭盔時才呼叫 GiveNamedItem，避免每回合無條件生成多餘實體
+    private static void ApplySmartArmor(CCSPlayerController player, CCSPlayerPawn pawn, int armorMode)
+    {
+        if (armorMode <= 0)
+        {
+            if (pawn.ArmorValue > 0) pawn.ArmorValue = 0;
+        }
+        else if (armorMode == 1)
+        {
+            if (pawn.ArmorValue < 100) player.GiveNamedItem("item_kevlar");
+        }
+        else
+        {
+            bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>()?.HasHelmet ?? false;
+            if (pawn.ArmorValue < 100 || !hasHelmet)
+            {
+                player.GiveNamedItem("item_assaultsuit");
+            }
+        }
+    }
+
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (@event.Userid is not { IsValid: true } player) return HookResult.Continue;
@@ -1184,9 +1271,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
             if (player.TeamNum is not 2 and not 3) return;
 
-            // 掃描玩家身上目前持有的武器真實名稱 (0-GC)
+            // 掃描玩家身上目前持有的武器真實名稱與數量 (0-GC)
             string currentPri = "";
             string currentSec = "";
+            int priCount = 0;
+            int secCount = 0;
             bool hasKnife = false;
 
             if (pawn.WeaponServices?.MyWeapons is { } weapons)
@@ -1205,10 +1294,12 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                         else if (PistolWeapons.Contains(wName))
                         {
                             currentSec = wName;
+                            secCount++;
                         }
                         else if (wName.StartsWith("weapon_") && !wName.Contains("c4"))
                         {
                             currentPri = wName;
+                            priCount++;
                         }
                     }
                 }
@@ -1229,42 +1320,32 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                 if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
                     priToGive = prefPri;
 
-                bool priMatches = string.Equals(currentPri, priToGive, StringComparison.OrdinalIgnoreCase);
-                bool secMatches = string.Equals(currentSec, secToGive, StringComparison.OrdinalIgnoreCase);
-
-                // 【防崩潰關鍵】：同模式武器相符時，完全不碰武器（0拔槍動畫）；
-                // 一旦不符（跨模式或死掉重生），統一使用最安全的 player.RemoveWeapons() 卸載，絕不單獨呼叫 weapon.Remove() 造成 Entity 398 崩潰！
-                if (!hasKnife || !priMatches || !secMatches)
-                {
-                    player.RemoveWeapons(); 
-                    player.GiveNamedItem("weapon_knife"); 
-                    if (!string.IsNullOrEmpty(secToGive)) player.GiveNamedItem(secToGive);
-                    if (!string.IsNullOrEmpty(priToGive)) player.GiveNamedItem(priToGive);
-                }
-
-                // 護甲每回合穩定重發
-                if (phase.Armor == 0) { pawn.ArmorValue = 0; }
-                else if (phase.Armor == 1) { player.GiveNamedItem("item_kevlar"); }
-                else if (phase.Armor == 2) { player.GiveNamedItem("item_assaultsuit"); }
+                ApplySmartLoadout(player, hasKnife, currentPri, currentSec, priCount, secCount, priToGive, secToGive);
+                ApplySmartArmor(player, pawn, phase.Armor);
 
                 if (phase.Grenades != null) foreach(var nade in phase.Grenades) player.GiveNamedItem(nade);
             }
             else
             {
-                // 暖身模式：計算目標武器並智慧比對保留
+                // 暖身模式：計算目標武器並智慧差量保留
                 bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
                 bool hasPrefSec = _playerSecondary.TryGetValue(steamId, out string? prefSec);
 
                 string targetWarmupPri = "";
                 string targetWarmupSec = "";
-                bool giveAssaultSuit = false;
+                int warmupArmorMode = 0;
 
                 for (int i = 0; i < Config.SpawnWeapons.Count; i++)
                 {
                     string item = Config.SpawnWeapons[i];
-                    if (item.Equals("item_assaultsuit", StringComparison.OrdinalIgnoreCase) || item.Equals("item_kevlar", StringComparison.OrdinalIgnoreCase))
+                    if (item.Equals("item_assaultsuit", StringComparison.OrdinalIgnoreCase))
                     {
-                        giveAssaultSuit = true;
+                        warmupArmorMode = 2;
+                        continue;
+                    }
+                    if (item.Equals("item_kevlar", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (warmupArmorMode < 2) warmupArmorMode = 1;
                         continue;
                     }
                     if (item.Contains("knife") || item.Contains("bayonet")) continue;
@@ -1279,21 +1360,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     }
                 }
 
-                bool priMatches = string.Equals(currentPri, targetWarmupPri, StringComparison.OrdinalIgnoreCase);
-                bool secMatches = string.Equals(currentSec, targetWarmupSec, StringComparison.OrdinalIgnoreCase);
-
-                if (!hasKnife || !priMatches || !secMatches)
-                {
-                    player.RemoveWeapons();
-                    player.GiveNamedItem("weapon_knife");
-                    if (!string.IsNullOrEmpty(targetWarmupSec)) player.GiveNamedItem(targetWarmupSec);
-                    if (!string.IsNullOrEmpty(targetWarmupPri)) player.GiveNamedItem(targetWarmupPri);
-                }
-
-                if (giveAssaultSuit)
-                {
-                    player.GiveNamedItem("item_assaultsuit");
-                }
+                ApplySmartLoadout(player, hasKnife, currentPri, currentSec, priCount, secCount, targetWarmupPri, targetWarmupSec);
+                if (warmupArmorMode > 0) ApplySmartArmor(player, pawn, warmupArmorMode);
             }
         });
         
@@ -1333,14 +1401,14 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (isNewPistol && string.Equals(currentSec, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
             if (!isNewPistol && string.Equals(currentPri, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
 
-            // 統一使用官方底層安全的 RemoveWeapons() 卸載後重給，100% 杜絕 Entity 懸空指標崩潰
+            // 統一使用官方底層安全的 RemoveWeapons() 卸載後重給，並以「先主武、後副武」順序發放
             int currentArmor = pawn.ArmorValue;
-            bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>().HasHelmet ?? false;
+            bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>()?.HasHelmet ?? false;
 
             player.RemoveWeapons();
             if (hasKnife) player.GiveNamedItem("weapon_knife");
-            if (!string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
             if (!string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
+            if (!string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
 
             if (currentArmor > 0)
             {
@@ -1485,6 +1553,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
+        // 確保每回合開始時地圖沒有殘留的 game_player_equip 發槍器
+        PurgeMapWeaponEntities();
+
         if (!_isMatchLive || _isCountdownActive || Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return HookResult.Continue;
         
         EnsureTeamEntitiesCached();
