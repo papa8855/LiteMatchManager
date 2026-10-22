@@ -343,7 +343,7 @@ public partial class LiteMatchManager
     {
         if (!result.Found)
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White}| 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White}| 初始積分：{ChatColors.Lime}1000");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}1000");
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合單挑定級賽");
         }
         else
