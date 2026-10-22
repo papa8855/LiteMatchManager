@@ -7,7 +7,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Text;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -65,6 +65,12 @@ public class EloQueryResponse
 // 使用 partial class 將段位積分與記分板 ClanTag 系統完全獨立出主程式檔案
 public partial class LiteMatchManager
 {
+    // 【優化 4：0-GC JSON 串流解析】共用靜態 JsonSerializerOptions，避免每次反序列化重新建立 Metadata 快取
+    private static readonly JsonSerializerOptions SharedJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     // 共用靜態 HttpClient (保持長連線 PooledConnection，消除第二次以後的 SSL 交握延遲)
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private static HttpClient CreateHttpClient()
@@ -89,17 +95,26 @@ public partial class LiteMatchManager
     public MemoryFunctionVoid<CCSPlayerController, uint, string>? SetClanFunc;
     private bool _isSetClanHooked = false;
 
-    // 儲存已打滿 30 勝上榜玩家的段位標籤 (未滿 30 勝者不存入，保持空標籤)
+    // 儲存玩家的段位標籤 (已滿 30 勝者存設定檔標籤；未滿 30 勝者存 "" 空字串，避免重複發送 HTTP 請求)
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
+
+    // 【優化 3：併發防重鎖】防止同一玩家在網路回應期間重複觸發背景 API 請求
+    private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
 
     // 【0-GC 單場擊殺與爆頭計數】：僅在玩家死亡時執行 int +1，對槍過程 0 負擔
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchHeadshots = new(8);
 
+    // 【優化 5：防第 30 分敗方秒退吞分備份】記錄本場 1v1 雙方的 SteamID 與名稱
+    private ulong _backupSteamIdT = 0;
+    private string _backupNameT = "";
+    private ulong _backupSteamIdCT = 0;
+    private string _backupNameCT = "";
+
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
 
-    // 【新增】：!rank 查詢冷卻紀錄 (每位玩家每 2 分鐘 / 120 秒只能查詢一次)
+    // 【!rank 查詢冷卻紀錄】：每位玩家每 2 分鐘 / 120 秒只能查詢一次
     private const float RankQueryCooldownSeconds = 120.0f;
     private readonly Dictionary<ulong, float> _rankQueryCooldown = new(64);
 
@@ -160,7 +175,7 @@ public partial class LiteMatchManager
         if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
             return;
 
-        // 尚未打滿 30 勝定級賽的玩家：_playerRankClanTag 中不會有他，targetTag 為 "" (完全不顯示)
+        // 尚未打滿 30 勝定級賽的玩家：savedTag 為 ""，targetTag 保持 "" (按 Tab 完全不顯示)
         string targetTag = _playerRankClanTag.TryGetValue(player.SteamID, out string? savedTag) && !string.IsNullOrEmpty(savedTag)
             ? savedTag
             : "";
@@ -187,22 +202,26 @@ public partial class LiteMatchManager
         }
     }
 
-    // 當玩家連線進入伺服器時，背景自動靜默抓取他的段位並掛上 Tab 記分板 (不印聊天室訊息)
+    // 當玩家連線進入伺服器時，背景自動靜默抓取他的段位並掛上 Tab 記分板 + 預熱 !rank 快取
     private void FetchPlayerClanTagOnConnect(CCSPlayerController? player)
     {
         if (_isServerShuttingDown) return;
         if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, SteamID: > 0 }) return;
         if (string.IsNullOrWhiteSpace(Config.StatsApiUrl)) return;
 
-        // 先把純數值 ulong steamId 複製出來，絕對不要在背景 Task 裡面碰 CCSPlayerController 指標！
+        // 先把純數值 ulong steamId 與當前時間複製出來，絕對不在背景 Task 裡面碰 CCSPlayerController 指標！
         ulong steamId = player.SteamID;
+        float now = Server.CurrentTime;
 
-        // 若記憶體已經有該玩家的段位標籤，直接套用，免連網！
+        // 【優化 3】：若記憶體已經查過該玩家 (無論是已上榜或未定級空字串 "")，直接套用，0 網路請求！
         if (_playerRankClanTag.ContainsKey(steamId))
         {
             ApplyPlayerRankClanTag(player);
             return;
         }
+
+        // 若該玩家的查詢請求已經在半路上，直接跳過，不重複發送
+        if (!_fetchingClanTags.TryAdd(steamId, 1)) return;
 
         string apiUrl = Config.StatsApiUrl;
         _ = Task.Run(async () =>
@@ -210,28 +229,31 @@ public partial class LiteMatchManager
             try
             {
                 string url = $"{apiUrl}?action=query&steamid={steamId}";
-                string respBody = await SharedHttpClient.GetStringAsync(url);
-                var result = JsonSerializer.Deserialize<EloQueryResponse>(respBody);
+                // 【優化 4】：直接從網路 Stream 反序列化，免除中間配置整段 JSON 字串
+                var result = await SharedHttpClient.GetFromJsonAsync<EloQueryResponse>(url, SharedJsonOptions);
                 if (result is not { Success: true }) return;
+
+                // 【優化 1】：順手將進服抓到的資料存入 !rank 本地快取 120 秒，玩家進服馬上打 !rank 直接 0ms 秒出！
+                _rankMemoryCache[steamId] = (result, now + 120.0f);
 
                 if (result.Found)
                 {
                     // 已完成 30 勝定級賽：讀取你在設定檔 LiteMatchManager.json 自訂的 ClanTag 名稱
-                    string customTag = GetConfiguredClanTagByElo(result.Elo);
-                    if (!string.IsNullOrEmpty(customTag))
-                        _playerRankClanTag[steamId] = customTag;
-                    else
-                        _playerRankClanTag.TryRemove(steamId, out _);
+                    _playerRankClanTag[steamId] = GetConfiguredClanTagByElo(result.Elo);
                 }
                 else
                 {
-                    // 未滿 30 勝定級賽：確保移除、按 Tab 旁邊什麼都不顯示
-                    _playerRankClanTag.TryRemove(steamId, out _);
+                    // 未滿 30 勝定級賽：存入空字串 "" 代表「已查過但無段位」，按 Tab 不顯示，且後續換隊不再重複查 API
+                    _playerRankClanTag[steamId] = "";
                 }
 
                 Server.NextFrame(() => ApplyPlayerRankClanTagBySteamId(steamId));
             }
             catch { }
+            finally
+            {
+                _fetchingClanTags.TryRemove(steamId, out _);
+            }
         });
     }
 
@@ -239,6 +261,7 @@ public partial class LiteMatchManager
     private void RemovePlayerClanTagCache(ulong steamId)
     {
         _playerRankClanTag.TryRemove(steamId, out _);
+        _fetchingClanTags.TryRemove(steamId, out _);
     }
 
     // 重置單場擊殺與爆頭統計
@@ -248,14 +271,20 @@ public partial class LiteMatchManager
         _matchHeadshots.Clear();
         _hasSubmittedElo = false;
 
-        if (Server.CurrentTime < 10.0f)
+        _backupSteamIdT = 0;
+        _backupNameT = "";
+        _backupSteamIdCT = 0;
+        _backupNameCT = "";
+
+        // 【優化 2】：放寬換圖初期的判定時間至 30 秒，確保工作坊地圖載入較慢時也能乾淨重置舊冷卻
+        if (!_isMatchLive && Server.CurrentTime < 30.0f)
         {
             _rankQueryCooldown.Clear();
             _rankMemoryCache.Clear();
         }
     }
 
-    // 記錄正賽期間的擊殺與爆頭
+    // 記錄正賽期間的擊殺與爆頭 (並同步備份 1v1 雙方資訊以防最後一分秒退)
     private void RecordEloKill(CCSPlayerController? attacker, CCSPlayerController? victim, bool isHeadshot)
     {
         if (!_isMatchLive || _isCountdownActive) return;
@@ -270,10 +299,23 @@ public partial class LiteMatchManager
             {
                 _matchHeadshots[aId] = _matchHeadshots.GetValueOrDefault(aId) + 1;
             }
+
+            // 【優化 5】：在 1v1 正賽交火期間，隨時備份 T / CT 雙方的 SteamID 與名稱
+            if (_liveMatchTargetPlayers == 2)
+            {
+                if (attacker.TeamNum == 2) { _backupSteamIdT = aId; _backupNameT = attacker.PlayerName ?? "Player"; }
+                else if (attacker.TeamNum == 3) { _backupSteamIdCT = aId; _backupNameCT = attacker.PlayerName ?? "Player"; }
+
+                if (!victim.IsBot && victim.SteamID > 0)
+                {
+                    if (victim.TeamNum == 2) { _backupSteamIdT = victim.SteamID; _backupNameT = victim.PlayerName ?? "Player"; }
+                    else if (victim.TeamNum == 3) { _backupSteamIdCT = victim.SteamID; _backupNameCT = victim.PlayerName ?? "Player"; }
+                }
+            }
         }
     }
 
-    // 檢查並觸發 30 勝完賽上傳 (僅限 1v1 且打滿 FinalMatchWinScore)
+    // 檢查並觸發 30 勝完賽上傳 (僅限 1v1 且打滿 FinalMatchWinScore，含敗方秒退防吞分機制)
     private void TrySubmitEloMatchResult(
         int scoreT,
         int scoreCT,
@@ -288,18 +330,31 @@ public partial class LiteMatchManager
             _liveMatchTargetPlayers != 2 ||
             winnerScore < Config.FinalMatchWinScore ||
             scoreT == scoreCT ||
-            playerT is null ||
-            playerCT is null ||
             string.IsNullOrWhiteSpace(Config.StatsApiUrl))
         {
             return;
         }
 
-        var winnerPlayer = scoreT > scoreCT ? playerT : playerCT;
-        var loserPlayer  = scoreT > scoreCT ? playerCT : playerT;
+        // 【優化 5】：優先使用場上實體；若敗方在第 30 分死掉瞬間秒退導致 playerT/CT 為 null，自動啟用備份名冊！
+        ulong steamIdT = playerT is { SteamID: > 0 } ? playerT.SteamID : _backupSteamIdT;
+        ulong steamIdCT = playerCT is { SteamID: > 0 } ? playerCT.SteamID : _backupSteamIdCT;
 
-        ulong wSteamId = winnerPlayer.SteamID;
-        ulong lSteamId = loserPlayer.SteamID;
+        if (steamIdT == 0 || steamIdCT == 0 || steamIdT == steamIdCT)
+        {
+            return;
+        }
+
+        bool isTWinner = scoreT > scoreCT;
+        ulong wSteamId = isTWinner ? steamIdT : steamIdCT;
+        ulong lSteamId = isTWinner ? steamIdCT : steamIdT;
+
+        string finalWinnerName = isTWinner
+            ? (playerT is not null ? winnerName : (!string.IsNullOrEmpty(_backupNameT) ? _backupNameT : winnerName))
+            : (playerCT is not null ? winnerName : (!string.IsNullOrEmpty(_backupNameCT) ? _backupNameCT : winnerName));
+
+        string finalLoserName = isTWinner
+            ? (playerCT is not null ? loserName : (!string.IsNullOrEmpty(_backupNameCT) ? _backupNameCT : loserName))
+            : (playerT is not null ? loserName : (!string.IsNullOrEmpty(_backupNameT) ? _backupNameT : loserName));
 
         int wKills = _matchKills.GetValueOrDefault(wSteamId);
         int lKills = _matchKills.GetValueOrDefault(lSteamId);
@@ -323,12 +378,12 @@ public partial class LiteMatchManager
             MapName       = Server.MapName ?? "Unknown",
             TargetScore   = Config.FinalMatchWinScore,
             WinnerSteamId = wSteamId.ToString(),
-            WinnerName    = winnerName,
+            WinnerName    = finalWinnerName,
             WinnerScore   = winnerScore,
             WinnerKills   = wKills,
             WinnerHs      = _matchHeadshots.GetValueOrDefault(wSteamId),
             LoserSteamId  = lSteamId.ToString(),
-            LoserName     = loserName,
+            LoserName     = finalLoserName,
             LoserScore    = loserScore,
             LoserKills    = lKills,
             LoserHs       = _matchHeadshots.GetValueOrDefault(lSteamId)
@@ -338,7 +393,7 @@ public partial class LiteMatchManager
         _ = Task.Run(() => SendEloReportAsync(apiUrl, payload, wSteamId, lSteamId));
     }
 
-    // 統一印出雙排段位資訊
+    // 統一印出雙排段位資訊 (100% 保留你設定的顏色與排版)
     private void PrintPlayerRankToChat(string playerName, EloQueryResponse result)
     {
         if (!result.Found)
@@ -353,7 +408,7 @@ public partial class LiteMatchManager
         }
     }
 
-    // 觸發玩家 !rank / !elo 指令查詢 (含 2 分鐘冷卻判斷 + 本地極速快取)
+    // 觸發玩家 !rank / !elo 指令查詢 (含 2 分鐘冷卻判斷 + 換圖時間軸保護 + 本地極速快取)
     private void TriggerPlayerRankQuery(CCSPlayerController player)
     {
         if (string.IsNullOrWhiteSpace(Config.StatsApiUrl) || player.SteamID == 0) return;
@@ -361,12 +416,16 @@ public partial class LiteMatchManager
         ulong sId = player.SteamID;
         float now = Server.CurrentTime;
 
-        // 檢查是否仍在 2 分鐘 (120 秒) 冷卻時間內
-        if (_rankQueryCooldown.TryGetValue(sId, out float nextAllowedTime) && now < nextAllowedTime)
+        // 【優化 2】：檢查是否仍在 2 分鐘 (120 秒) 冷卻時間內，並防止換圖後 CurrentTime 重置導致冷卻鎖死
+        if (_rankQueryCooldown.TryGetValue(sId, out float nextAllowedTime))
         {
-            int remainingSeconds = (int)Math.Ceiling(nextAllowedTime - now);
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}查詢冷卻中，請於 {ChatColors.Lime}{remainingSeconds} 秒{ChatColors.Orange} 後再試");
-            return;
+            float diff = nextAllowedTime - now;
+            if (diff > 0f && diff <= RankQueryCooldownSeconds)
+            {
+                int remainingSeconds = (int)Math.Ceiling(diff);
+                player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}查詢冷卻中，請於 {ChatColors.Lime}{remainingSeconds} 秒{ChatColors.Orange} 後再試");
+                return;
+            }
         }
 
         // 先寫入冷卻鎖 (若網路失敗會在 catch 中自動退還)
@@ -374,8 +433,8 @@ public partial class LiteMatchManager
 
         string pName = player.PlayerName ?? "Player";
 
-        // 若本地記憶體快取內有新鮮資料，直接 0 毫秒瞬間印出，不用等遠端 iFastNet！
-        if (_rankMemoryCache.TryGetValue(sId, out var cached) && now < cached.ExpireTime)
+        // 若本地記憶體快取內有新鮮資料 (包含剛進服預載的資料)，直接 0 毫秒瞬間印出，不用等遠端 iFastNet！
+        if (_rankMemoryCache.TryGetValue(sId, out var cached) && now < cached.ExpireTime && (cached.ExpireTime - now) <= 125.0f)
         {
             PrintPlayerRankToChat(pName, cached.Data);
             ApplyPlayerRankClanTag(player);
@@ -386,18 +445,15 @@ public partial class LiteMatchManager
         _ = Task.Run(() => QueryPlayerRankAsync(sId, pName, apiUrl, now));
     }
 
-    // 【背景異步上傳】：不阻塞 CS2 主執行緒，收到 iFastNet 回傳後於 NextFrame 印出段位並即時更新雙方記分板 ClanTag
+    // 【背景異步上傳】：0-GC PostAsJsonAsync，收到 iFastNet 回傳後於 NextFrame 印出段位並即時更新雙方記分板 ClanTag
     private async Task SendEloReportAsync(string apiUrl, EloReportPayload payload, ulong wSteamId, ulong lSteamId)
     {
         try
         {
-            string json = JsonSerializer.Serialize(payload);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await SharedHttpClient.PostAsync(apiUrl, content);
+            using var response = await SharedHttpClient.PostAsJsonAsync(apiUrl, payload, SharedJsonOptions);
             if (!response.IsSuccessStatusCode) return;
 
-            string respBody = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<EloReportResponse>(respBody);
+            var result = await response.Content.ReadFromJsonAsync<EloReportResponse>(SharedJsonOptions);
             if (result is not { Success: true }) return;
 
             // 完賽後雙方皆已完成定級，依照最新 Elo 分數直接套用 LiteMatchManager.json 自訂的 ClanTag 名稱
@@ -421,14 +477,13 @@ public partial class LiteMatchManager
         }
     }
 
-    // 【背景異步查詢】：處理玩家輸入 !rank / !elo 查詢個人段位 (雙排整齊顯示版 + 失敗退還冷卻 + 同步記分板標籤)
+    // 【背景異步查詢】：0-GC GetFromJsonAsync 處理玩家輸入 !rank / !elo 查詢個人段位
     private async Task QueryPlayerRankAsync(ulong steamId, string playerName, string apiUrl, float queryTime)
     {
         try
         {
             string url = $"{apiUrl}?action=query&steamid={steamId}";
-            string respBody = await SharedHttpClient.GetStringAsync(url);
-            var result = JsonSerializer.Deserialize<EloQueryResponse>(respBody);
+            var result = await SharedHttpClient.GetFromJsonAsync<EloQueryResponse>(url, SharedJsonOptions);
             if (result is not { Success: true })
             {
                 Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
@@ -438,19 +493,10 @@ public partial class LiteMatchManager
             // 存入快取 120 秒
             _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
 
-            // 若該玩家已打滿 30 勝上榜 (result.Found)，依照 Elo 套用設定檔自訂的 ClanTag；否則確保不顯示
-            if (result.Found)
-            {
-                string customTag = GetConfiguredClanTagByElo(result.Elo);
-                if (!string.IsNullOrEmpty(customTag))
-                    _playerRankClanTag[steamId] = customTag;
-                else
-                    _playerRankClanTag.TryRemove(steamId, out _);
-            }
-            else
-            {
-                _playerRankClanTag.TryRemove(steamId, out _);
-            }
+            // 若該玩家已打滿 30 勝上榜 (result.Found)，依照 Elo 套用設定檔自訂的 ClanTag；否則存空字串 "" 不顯示
+            _playerRankClanTag[steamId] = result.Found
+                ? GetConfiguredClanTagByElo(result.Elo)
+                : "";
 
             Server.NextFrame(() =>
             {
