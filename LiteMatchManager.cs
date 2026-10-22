@@ -117,14 +117,19 @@ public class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("HudHtml_RoundStart_Title")] public string HudHtml_RoundStart_Title { get; set; } = "<font class='fontSize-l' color='lime'><b>{0}回合：</b></font><font class='fontSize-l' color='gold'><b>模式 / 搶 </b></font><font class='fontSize-l' color='Green'><b>{1}</b></font><font class='fontSize-l' color='gold'><b> 勝</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_TScore")] public string HudHtml_RoundStart_TScore { get; set; } = "<font class='fontSize-l' color='#FF4500'><b>目 前 恐 怖 份 子：{0}</b></font><br>";
     [JsonPropertyName("HudHtml_RoundStart_CTScore")] public string HudHtml_RoundStart_CTScore { get; set; } = "<font class='fontSize-l' color='lightblue'><b>目 前 反 恐 精 英：{0}</b></font><br><font class='fontSize-l' color='gold'><b>比 賽 贏 </b></font><font class='fontSize-l' color='Green'><b>３０</b></font><font class='fontSize-l' color='gold'><b> 回合 為 主</b></font>";
+
+    // 【新增】：遠端 iFastNet PHP 排位 API 設定 (實際邏輯拆分於 EloRankSystem.cs)
+    [JsonPropertyName("StatsApiUrl")] public string StatsApiUrl { get; set; } = "";
+    [JsonPropertyName("StatsApiKey")] public string StatsApiKey { get; set; } = "TW_CS_Secret_2026";
 }
 
-public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
+// 加上 partial 關鍵字，與 EloRankSystem.cs 自動合體
+public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.37_ZeroDoubleDraw_AntiJitter";
+    public override string ModuleVersion => "9.39_Elo_VoiceSplit_NoRagdoll";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 (根除重複拿槍動畫版)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位+2v2語音分流+屍體清除)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -264,6 +269,33 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             {
                 equip.Remove();
             }
+        }
+    }
+
+    // 【新增功能 23】：徹底清除地面屍體模型 (cs_ragdoll)，防止窄道掩體被屍體擋住視線並減輕客戶端物理運算
+    private static void PurgeRagdolls()
+    {
+        foreach (var ragdoll in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("cs_ragdoll"))
+        {
+            if (ragdoll is { IsValid: true })
+            {
+                ragdoll.Remove();
+            }
+        }
+    }
+
+    // 【新增功能 18】：1v1 與 2v2 語音自動分流控制
+    private static void ApplyVoiceMode(bool enableAllTalk)
+    {
+        if (enableAllTalk)
+        {
+            // 1v1 單挑、暖身或賽後 5 秒：開啟全頻語音讓雙方直接交流
+            Server.ExecuteCommand("sv_alltalk 1; sv_full_alltalk 1; sv_deadtalk 1");
+        }
+        else
+        {
+            // 2v2 團戰正賽期間：關閉全頻語音，僅限同隊語音報點 (死後仍可對同隊活人報點)
+            Server.ExecuteCommand("sv_alltalk 0; sv_full_alltalk 0; sv_deadtalk 1");
         }
     }
 
@@ -599,6 +631,18 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             return HookResult.Continue;
         }, HookMode.Pre);
 
+        // 【新增功能 23 + 32】：0.5 秒清除屍體 + 呼叫 EloRankSystem.cs 記錄擊殺與爆頭
+        RegisterEventHandler<EventPlayerDeath>((@event, info) =>
+        {
+            if (!_isServerShuttingDown)
+            {
+                AddTimer(0.5f, PurgeRagdolls);
+            }
+
+            RecordEloKill(@event.Attacker, @event.Userid, @event.Headshot);
+            return HookResult.Continue;
+        });
+
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventRoundStart>(OnEventRoundStart);
         RegisterEventHandler<EventCsWinPanelMatch>(OnMatchEnd);
@@ -697,6 +741,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
     {
         if (!_isMatchLive || _isChangingMap) return HookResult.Continue;
 
+        // 【新增功能 18】：比賽結束最後 5 秒換圖期間，自動切回 sv_alltalk 1 讓全場玩家賽後交流
+        Server.NextFrame(() => ApplyVoiceMode(enableAllTalk: true));
+
         int scoreT = 0, scoreCT = 0;
 
         EnsureTeamEntitiesCached();
@@ -706,6 +753,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 
         string winnerName = scoreT > scoreCT ? "恐怖份子" : "反恐小組";
         string loserName = scoreT > scoreCT ? "反恐小組" : "恐怖份子";
+
+        CCSPlayerController? playerT = null;
+        CCSPlayerController? playerCT = null;
         
         if (_liveMatchTargetPlayers == 2)
         {
@@ -713,8 +763,8 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             string nameCT = "反恐小組";
             foreach (var p in _serverPlayersCache)
             {
-                if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 2 }) nameT = p.PlayerName;
-                else if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 3 }) nameCT = p.PlayerName;
+                if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 2 }) { nameT = p.PlayerName; playerT = p; }
+                else if (p is { IsValid: true, Handle: not 0, IsBot: false, TeamNum: 3 }) { nameCT = p.PlayerName; playerCT = p; }
             }
             winnerName = scoreT > scoreCT ? nameT : nameCT;
             loserName = scoreT > scoreCT ? nameCT : nameT;
@@ -724,6 +774,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         int loserScore = Math.Min(scoreT, scoreCT);
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green} {winnerScore} : {loserScore} {ChatColors.Gold}贏得了最終勝利");
+
+        // 【呼叫 EloRankSystem.cs】：檢查並上傳 30 勝完賽 Elo 與段位
+        TrySubmitEloMatchResult(scoreT, scoreCT, winnerScore, loserScore, winnerName, loserName, playerT, playerCT);
 
         TriggerMapChange();
         return HookResult.Continue;
@@ -748,7 +801,11 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             if (_cvWarmupPauseTimer is not null) _cvWarmupPauseTimer.SetValue(1);
             else Server.ExecuteCommand("mp_warmup_pausetimer 1");
             
-            Server.NextFrame(() => Server.ExecuteCommand($"exec {Config.WarmupConfigName}"));
+            Server.NextFrame(() =>
+            {
+                Server.ExecuteCommand($"exec {Config.WarmupConfigName}");
+                ApplyVoiceMode(enableAllTalk: true);
+            });
         });
     }
 
@@ -888,6 +945,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         if (string.Equals(command, "nextmap", StringComparison.OrdinalIgnoreCase) && AdminManager.PlayerHasPermissions(player, "@css/root"))
         {
             TriggerMapChange(); return HookResult.Handled; 
+        }
+
+        // 【呼叫 EloRankSystem.cs】：玩家輸入 !rank 或 !elo 查詢個人段位與積分
+        if (string.Equals(command, "rank", StringComparison.OrdinalIgnoreCase) || string.Equals(command, "elo", StringComparison.OrdinalIgnoreCase))
+        {
+            TriggerPlayerRankQuery(player);
+            return HookResult.Continue;
         }
 
         if (_readyCommandsSet.Contains(command))
@@ -1071,6 +1135,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
             _playerSecondary.Clear();
             _lockedTeam.Clear(); // 清空舊名冊
             _pendingInitialReminders.Clear();
+            ResetEloMatchStats();
             
             // 【產生名冊鎖】：開賽瞬間紀錄所有存活玩家的隊伍
             foreach (var p in _serverPlayersCache)
@@ -1149,10 +1214,13 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
                     if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
 
-                    // 刷新比賽並掃除地圖發槍實體
+                    // 刷新比賽、掃除地圖發槍實體，並根據 1v1 / 2v2 自動分流語音設定
+                    bool is1v1 = _liveMatchTargetPlayers == 2;
                     Server.NextFrame(() => { 
                         PurgeMapWeaponEntities();
-                        Server.ExecuteCommand($"exec {Config.LiveConfigName}"); 
+                        Server.ExecuteCommand($"exec {Config.LiveConfigName}");
+                        // 【新增功能 18】：在 live.cfg 載入後下一幀設定語音 (1v1 全頻聊天 / 2v2 僅同隊報點)
+                        Server.NextFrame(() => ApplyVoiceMode(enableAllTalk: is1v1));
                     });
                     
                     _liveTimer?.Kill();
@@ -1266,6 +1334,9 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         }
         
         Server.NextFrame(() => {
+            // 【新增功能 23】：暖身期間無限復活時，順手清除場上殘留的舊屍體
+            if (!_isMatchLive) PurgeRagdolls();
+
             if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
             
             // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
@@ -1534,6 +1605,7 @@ public class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
         
         _playerPrimary.Clear();
         _playerSecondary.Clear();
+        ResetEloMatchStats();
 
         _pendingInitialReminders.Clear();
         _hasReceivedInitialReminder.Clear();
