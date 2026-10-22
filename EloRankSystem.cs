@@ -82,13 +82,12 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
-    // 【0-Timer 純事件驅動 ClanTag 系統】：攔截 CCSPlayerController::SetClan
-    // 完全不需開 Timer 每秒掃描，引擎永遠無法用 Steam 群組標籤覆蓋我們的段位！
+    // 【100% 比照 MatchZy 穩定版 ClanTag 架構】：
+    // 只用 SetClanFunc.Hook 阻擋引擎覆寫 (HookResult.Handled)，
+    // 絕不呼叫危險的 SetClanFunc.Invoke()，改用原生 player.Clan + SetStateChanged，徹底杜絕閃退！
     // =========================================================================
-    private const uint CustomClanId = 1;
-    private MemoryFunctionVoid<CCSPlayerController, uint, string>? _setClanFunc;
+    public MemoryFunctionVoid<CCSPlayerController, uint, string>? SetClanFunc;
     private bool _isSetClanHooked = false;
-    private bool _allowInternalSetClan = false;
 
     // 儲存已打滿 30 勝上榜玩家的段位標籤 (未滿 30 勝者不存入，保持空標籤)
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
@@ -114,39 +113,34 @@ public partial class LiteMatchManager
     {
         try
         {
-            _setClanFunc = new MemoryFunctionVoid<CCSPlayerController, uint, string>("CCSPlayerController::SetClan");
-            _setClanFunc.Hook(OnSetClanPre, HookMode.Pre);
+            SetClanFunc = new MemoryFunctionVoid<CCSPlayerController, uint, string>("CCSPlayerController::SetClan");
+            SetClanFunc.Hook(OnSetClanPre, HookMode.Pre);
             _isSetClanHooked = true;
-            Console.WriteLine("[LiteMatchManager] CCSPlayerController::SetClan 攔截器啟動成功 (0-Timer 常駐段位標籤)！");
+            Console.WriteLine("[LiteMatchManager] CCSPlayerController::SetClan 攔截盾牌啟動成功 (MatchZy 同款安全模式)！");
         }
         catch (Exception ex)
         {
             _isSetClanHooked = false;
-            Console.WriteLine($"[LiteMatchManager] 提示：未讀取到 CCSPlayerController::SetClan 簽名，將使用標準 m_szClan 同步 ({ex.Message})");
+            Console.WriteLine($"[LiteMatchManager] 提示：未掛載 CCSPlayerController::SetClan，將使用標準 m_szClan 同步 ({ex.Message})");
         }
     }
 
     private void UnloadEloClanTagSystem()
     {
-        if (_isSetClanHooked && _setClanFunc != null)
+        if (_isSetClanHooked && SetClanFunc != null)
         {
             try
             {
-                _setClanFunc.Unhook(OnSetClanPre, HookMode.Pre);
+                SetClanFunc.Unhook(OnSetClanPre, HookMode.Pre);
             }
             catch { }
             _isSetClanHooked = false;
         }
     }
 
-    // 攔截引擎自發的 Steam 群組標籤刷新 (GC persona data)，只有我們自己呼叫時才放行
+    // 【與 MatchZy 完全相同】：單純沒收 CS2 引擎修改標籤的權限，不跨 C++ 封裝任何指標，0 閃退風險！
     private HookResult OnSetClanPre(DynamicHook hook)
     {
-        if (_allowInternalSetClan)
-        {
-            return HookResult.Continue;
-        }
-        // 直接阻斷引擎覆蓋標籤 (等同 C++ KHook::Action::Supersede)
         return HookResult.Handled;
     }
 
@@ -160,34 +154,17 @@ public partial class LiteMatchManager
         return Config.ClanTag_TierD ?? "";
     }
 
-    // 設定單一玩家的記分板段位標籤 (若與目前相同則跳過，避免多餘的網路封包同步)
+    // 【100% 採用 MatchZy 原生安全寫法】：直接設定 player.Clan 並呼叫 Utilities.SetStateChanged
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
     {
-        if (player is not { IsValid: true, IsBot: false, IsHLTV: false, SteamID: > 0 }) return;
+        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
+            return;
 
         // 尚未打滿 30 勝定級賽的玩家：_playerRankClanTag 中不會有他，targetTag 為 "" (完全不顯示)
         string targetTag = _playerRankClanTag.TryGetValue(player.SteamID, out string? savedTag) && !string.IsNullOrEmpty(savedTag)
             ? savedTag
             : "";
 
-        string currentTag = player.Clan ?? "";
-        if (string.Equals(currentTag, targetTag, StringComparison.Ordinal)) return;
-
-        if (_isSetClanHooked && _setClanFunc != null)
-        {
-            uint clanId = string.IsNullOrEmpty(targetTag) ? 0u : CustomClanId;
-            try
-            {
-                _allowInternalSetClan = true;
-                _setClanFunc.Invoke(player, clanId, targetTag);
-            }
-            finally
-            {
-                _allowInternalSetClan = false;
-            }
-        }
-
-        // 雙重保險：同步更新 m_szClan 並通知狀態改變
         if (player.Clan != targetTag)
         {
             player.Clan = targetTag;
@@ -195,18 +172,35 @@ public partial class LiteMatchManager
         }
     }
 
+    // 根據 SteamID 從快取清單中安全找出該名玩家並套用標籤 (防止跨執行緒指標失效)
+    private void ApplyPlayerRankClanTagBySteamId(ulong steamId)
+    {
+        if (_isServerShuttingDown || steamId == 0) return;
+
+        foreach (var p in _serverPlayersCache)
+        {
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, SteamID: var sid } && sid == steamId)
+            {
+                ApplyPlayerRankClanTag(p);
+                break;
+            }
+        }
+    }
+
     // 當玩家連線進入伺服器時，背景自動靜默抓取他的段位並掛上 Tab 記分板 (不印聊天室訊息)
     private void FetchPlayerClanTagOnConnect(CCSPlayerController? player)
     {
-        if (player is not { IsValid: true, IsBot: false, IsHLTV: false, SteamID: > 0 }) return;
+        if (_isServerShuttingDown) return;
+        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, SteamID: > 0 }) return;
         if (string.IsNullOrWhiteSpace(Config.StatsApiUrl)) return;
 
+        // 先把純數值 ulong steamId 複製出來，絕對不要在背景 Task 裡面碰 CCSPlayerController 指標！
         ulong steamId = player.SteamID;
 
-        // 若記憶體已經有該玩家的段位標籤，直接下一幀套用，免連網！
+        // 若記憶體已經有該玩家的段位標籤，直接套用，免連網！
         if (_playerRankClanTag.ContainsKey(steamId))
         {
-            Server.NextFrame(() => ApplyPlayerRankClanTag(player));
+            ApplyPlayerRankClanTag(player);
             return;
         }
 
@@ -235,18 +229,7 @@ public partial class LiteMatchManager
                     _playerRankClanTag.TryRemove(steamId, out _);
                 }
 
-                Server.NextFrame(() =>
-                {
-                    if (_isServerShuttingDown) return;
-                    foreach (var p in _serverPlayersCache)
-                    {
-                        if (p is { IsValid: true, SteamID: var sid } && sid == steamId)
-                        {
-                            ApplyPlayerRankClanTag(p);
-                            break;
-                        }
-                    }
-                });
+                Server.NextFrame(() => ApplyPlayerRankClanTagBySteamId(steamId));
             }
             catch { }
         });
@@ -428,13 +411,8 @@ public partial class LiteMatchManager
                 Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} (-{result.LoserDelta} ▼) {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
 
                 // 同步刷新場上雙方的記分板標籤
-                foreach (var p in _serverPlayersCache)
-                {
-                    if (p is { IsValid: true, SteamID: var sid } && (sid == wSteamId || sid == lSteamId))
-                    {
-                        ApplyPlayerRankClanTag(p);
-                    }
-                }
+                ApplyPlayerRankClanTagBySteamId(wSteamId);
+                ApplyPlayerRankClanTagBySteamId(lSteamId);
             });
         }
         catch (Exception ex)
@@ -478,15 +456,7 @@ public partial class LiteMatchManager
             {
                 if (_isServerShuttingDown) return;
                 PrintPlayerRankToChat(playerName, result);
-
-                foreach (var p in _serverPlayersCache)
-                {
-                    if (p is { IsValid: true, SteamID: var sid } && sid == steamId)
-                    {
-                        ApplyPlayerRankClanTag(p);
-                        break;
-                    }
-                }
+                ApplyPlayerRankClanTagBySteamId(steamId);
             });
         }
         catch (Exception ex)
