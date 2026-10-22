@@ -150,11 +150,14 @@ public partial class LiteMatchManager
         return HookResult.Handled;
     }
 
-    // 將段位文字精簡為適合 CS2 Tab 記分板寬度的格式 (例如 "【 傳奇槍神 S+ 】" -> "傳奇槍神 S+")
-    private static string FormatClanTagFromRankTitle(string rawRankTitle)
+    // 【由設定檔決定 ClanTag 顯示名稱】：根據玩家的 Elo 積分，直接回傳 LiteMatchManager.json 中你設定的 ClanTag 文字
+    private string GetConfiguredClanTagByElo(int elo)
     {
-        if (string.IsNullOrWhiteSpace(rawRankTitle)) return "";
-        return rawRankTitle.AsSpan().Trim(" 【】『』─👑💎🔥⚔️🛡️\t\r\n").ToString();
+        if (elo >= 1800) return Config.ClanTag_TierS ?? "";
+        if (elo >= 1500) return Config.ClanTag_TierA ?? "";
+        if (elo >= 1250) return Config.ClanTag_TierB ?? "";
+        if (elo >= 1000) return Config.ClanTag_TierC ?? "";
+        return Config.ClanTag_TierD ?? "";
     }
 
     // 設定單一玩家的記分板段位標籤 (若與目前相同則跳過，避免多餘的網路封包同步)
@@ -217,14 +220,18 @@ public partial class LiteMatchManager
                 var result = JsonSerializer.Deserialize<EloQueryResponse>(respBody);
                 if (result is not { Success: true }) return;
 
-                if (result.Found && !string.IsNullOrWhiteSpace(result.RankTitle))
+                if (result.Found)
                 {
-                    string cleanTag = FormatClanTagFromRankTitle(result.RankTitle);
-                    _playerRankClanTag[steamId] = cleanTag;
+                    // 已完成 30 勝定級賽：讀取你在設定檔 LiteMatchManager.json 自訂的 ClanTag 名稱
+                    string customTag = GetConfiguredClanTagByElo(result.Elo);
+                    if (!string.IsNullOrEmpty(customTag))
+                        _playerRankClanTag[steamId] = customTag;
+                    else
+                        _playerRankClanTag.TryRemove(steamId, out _);
                 }
                 else
                 {
-                    // 未滿 30 勝定級賽：確保移除、不顯示任何標籤
+                    // 未滿 30 勝定級賽：確保移除、按 Tab 旁邊什麼都不顯示
                     _playerRankClanTag.TryRemove(steamId, out _);
                 }
 
@@ -410,11 +417,9 @@ public partial class LiteMatchManager
             var result = JsonSerializer.Deserialize<EloReportResponse>(respBody);
             if (result is not { Success: true }) return;
 
-            // 完賽後雙方皆已有戰績紀錄，立刻寫入最新段位標籤
-            if (!string.IsNullOrWhiteSpace(result.WinnerRank))
-                _playerRankClanTag[wSteamId] = FormatClanTagFromRankTitle(result.WinnerRank);
-            if (!string.IsNullOrWhiteSpace(result.LoserRank))
-                _playerRankClanTag[lSteamId] = FormatClanTagFromRankTitle(result.LoserRank);
+            // 完賽後雙方皆已完成定級，依照最新 Elo 分數直接套用 LiteMatchManager.json 自訂的 ClanTag 名稱
+            _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
+            _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
 
             Server.NextFrame(() =>
             {
@@ -455,10 +460,14 @@ public partial class LiteMatchManager
             // 存入快取 120 秒
             _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
 
-            // 若該玩家已打滿 30 勝上榜 (result.Found)，寫入段位標籤；否則確保不顯示
-            if (result.Found && !string.IsNullOrWhiteSpace(result.RankTitle))
+            // 若該玩家已打滿 30 勝上榜 (result.Found)，依照 Elo 套用設定檔自訂的 ClanTag；否則確保不顯示
+            if (result.Found)
             {
-                _playerRankClanTag[steamId] = FormatClanTagFromRankTitle(result.RankTitle);
+                string customTag = GetConfiguredClanTagByElo(result.Elo);
+                if (!string.IsNullOrEmpty(customTag))
+                    _playerRankClanTag[steamId] = customTag;
+                else
+                    _playerRankClanTag.TryRemove(steamId, out _);
             }
             else
             {
