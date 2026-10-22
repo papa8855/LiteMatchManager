@@ -349,7 +349,7 @@ public partial class LiteMatchManager
         else
         {
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 排名：{ChatColors.Lime}第 {result.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{result.RankTitle}");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 ( {result.WinRate} %) {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
         }
     }
 
