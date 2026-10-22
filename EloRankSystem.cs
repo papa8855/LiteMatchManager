@@ -86,8 +86,8 @@ public partial class LiteMatchManager
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
 
-    // 【新增】：!rank 查詢冷卻紀錄 (每位玩家每 3 分鐘 / 180 秒只能查詢一次)
-    private const float RankQueryCooldownSeconds = 180.0f;
+    // 【新增】：!rank 查詢冷卻紀錄 (每位玩家每 2 分鐘 / 120 秒只能查詢一次)
+    private const float RankQueryCooldownSeconds = 120.0f;
     private readonly Dictionary<ulong, float> _rankQueryCooldown = new(64);
 
     // 【極速快取】：將查過的段位暫存於本地記憶體 60 秒，達成 0 毫秒瞬間顯示
@@ -159,7 +159,7 @@ public partial class LiteMatchManager
         // 【防範 3：防掛網洗分保護】若敗方整場 0 擊殺且 0 勝分，視為掛網送頭局，不予計算積分
         if (lKills == 0 && loserScore == 0)
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}系統偵測到敗方本場為 0 擊殺 (疑似掛網)，本局不計入 Elo 排位積分！");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場為 0 擊殺，本局不計入排位積分");
             return;
         }
 
@@ -196,7 +196,7 @@ public partial class LiteMatchManager
         if (!result.Found)
         {
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White}| 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White}| 初始積分：{ChatColors.Lime}1000");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 勝單挑定級賽");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合單挑定級賽");
         }
         else
         {
@@ -205,7 +205,7 @@ public partial class LiteMatchManager
         }
     }
 
-    // 觸發玩家 !rank / !elo 指令查詢 (含 3 分鐘冷卻判斷 + 本地極速快取)
+    // 觸發玩家 !rank / !elo 指令查詢 (含 2 分鐘冷卻判斷 + 本地極速快取)
     private void TriggerPlayerRankQuery(CCSPlayerController player)
     {
         if (string.IsNullOrWhiteSpace(Config.StatsApiUrl) || player.SteamID == 0) return;
@@ -213,11 +213,11 @@ public partial class LiteMatchManager
         ulong sId = player.SteamID;
         float now = Server.CurrentTime;
 
-        // 檢查是否仍在 3 分鐘 (180 秒) 冷卻時間內
+        // 檢查是否仍在 2 分鐘 (120 秒) 冷卻時間內
         if (_rankQueryCooldown.TryGetValue(sId, out float nextAllowedTime) && now < nextAllowedTime)
         {
             int remainingSeconds = (int)Math.Ceiling(nextAllowedTime - now);
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}查詢冷卻中，請於 {ChatColors.Lime}{remainingSeconds} 秒{ChatColors.Orange} 後再試！");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}查詢冷卻中，請於 {ChatColors.Lime}{remainingSeconds} 秒{ChatColors.Orange} 後再試");
             return;
         }
 
@@ -278,8 +278,8 @@ public partial class LiteMatchManager
                 return;
             }
 
-            // 存入快取 180 秒
-            _rankMemoryCache[steamId] = (result, queryTime + 180.0f);
+            // 存入快取 120 秒
+            _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
 
             Server.NextFrame(() =>
             {
