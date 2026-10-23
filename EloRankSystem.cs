@@ -448,20 +448,26 @@ public partial class LiteMatchManager
         _ = Task.Run(() => SendEloReportAsync(apiUrl, payload));
     }
 
-    // 【修改處】：改為僅印給該玩家自己看 (私密訊息)，不進行全服廣播
-    private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string playerName, EloQueryResponse result)
+    // 統一印出雙排段位資訊 (私密聊天 + 畫面正中間 HUD 顯示)
+private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string playerName, EloQueryResponse result)
+{
+    if (!result.Found)
     {
-        if (!result.Found)
-        {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}900");
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
-        }
-        else
-        {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 排名：{ChatColors.Lime}第 {result.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{result.RankTitle}");
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
-        }
+        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}900");
+        player.PrintToChat($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
+        
+        // 同步顯示在畫面中間 HUD
+        player.PrintToCenter($"段位：尚未定級 (30回合定級賽中)");
     }
+    else
+    {
+        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 排名：{ChatColors.Lime}第 {result.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{result.RankTitle}");
+        player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
+        
+        // 同步顯示在畫面中間 HUD (帶有排名與積分)
+        player.PrintToCenter($"段位：{result.RankTitle} | 積分：{result.Elo}分");
+    }
+}
 
     private void TriggerPlayerRankQuery(CCSPlayerController player)
     {
