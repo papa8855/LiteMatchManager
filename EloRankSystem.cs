@@ -526,7 +526,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         _ = Task.Run(() => QueryPlayerRankAsync(sId, pName, apiUrl, now));
     }
 
-    // 【新增】：統一印出前三名排行資訊 (分三排顯示)
+   // 【修改】：統一印出前三名排行資訊 (加入積分顯示)
     private void PrintTopPlayersToPrivateChat(CCSPlayerController player, List<EloTopPlayerItem>? topPlayers)
     {
         if (topPlayers == null || topPlayers.Count == 0)
@@ -537,7 +537,8 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
 
         foreach (var item in topPlayers)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White} | 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{item.RankTitle}");
+            // 在這裡加入了 {ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White} | 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{item.RankTitle} {ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}");
         }
     }
 
