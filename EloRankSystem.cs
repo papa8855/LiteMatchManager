@@ -480,7 +480,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         player.PrintToChat($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
         
         // HUD 僅顯示段位與初始積分
-        player.PrintToCenter($"段位：{result.RankTitle} | 積分：900分");
+        player.PrintToCenter($"段位：尚未定級 (30回合定級賽)");
     }
     else
     {
