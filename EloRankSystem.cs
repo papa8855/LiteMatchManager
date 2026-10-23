@@ -520,7 +520,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         // 若本地記憶體快取內有新鮮資料 (包含剛進服預載的資料)，直接 0 毫秒瞬間印出，不用等遠端 iFastNet！
         if (_rankMemoryCache.TryGetValue(sId, out var cached) && now < cached.ExpireTime && (cached.ExpireTime - now) <= 125.0f)
         {
-            PrintPlayerRankToChat(pName, cached.Data);
+            PrintPlayerRankToChat(player, pName, cached.Data);
             ApplyPlayerRankClanTag(player);
             return;
         }
@@ -616,10 +616,20 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
                 ? GetConfiguredClanTagByElo(result.Elo)
                 : "";
 
-            Server.NextFrame(() =>
+           Server.NextFrame(() =>
             {
                 if (_isServerShuttingDown) return;
-                PrintPlayerRankToChat(playerName, result);
+                
+                // 從伺服器在線玩家快取中找到該玩家的 Controller 物件來發送私密訊息與 HUD
+                foreach (var p in _serverPlayersCache)
+                {
+                    if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
+                    {
+                        PrintPlayerRankToChat(p, playerName, result);
+                        break;
+                    }
+                }
+                
                 ApplyPlayerRankClanTagBySteamId(steamId);
             });
         }
