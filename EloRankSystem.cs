@@ -1,5 +1,7 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 using System;
 using System.Collections.Concurrent;
@@ -60,16 +62,13 @@ public class EloQueryResponse
     [JsonPropertyName("hs_rate")] public double HsRate { get; set; }
 }
 
-// 使用 partial class 將段位積分與記分板 ClanTag 系統完全獨立出主程式檔案
 public partial class LiteMatchManager
 {
-    // 【優化 4：0-GC JSON 串流解析】共用靜態 JsonSerializerOptions，避免每次反序列化重新建立 Metadata 快取
     private static readonly JsonSerializerOptions SharedJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    // 共用靜態 HttpClient (保持長連線 PooledConnection，消除第二次以後的 SSL 交握延遲)
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private static HttpClient CreateHttpClient()
     {
@@ -81,53 +80,65 @@ public partial class LiteMatchManager
         };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
         client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36");
-        client.DefaultRequestHeaders.ConnectionClose = false; // 強制 Keep-Alive 加速跨國連線
+        client.DefaultRequestHeaders.ConnectionClose = false;
         return client;
     }
 
-    // 儲存玩家的段位標籤 (已滿 30 勝者存設定檔標籤；未滿 30 勝者存 "" 空字串，避免重複發送 HTTP 請求)
-    private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
+    public MemoryFunctionVoid<CCSPlayerController, uint, string>? SetClanFunc;
+    private bool _isSetClanHooked = false;
 
-    // 【優化 3：併發防重鎖】防止同一玩家在網路回應期間重複觸發背景 API 請求
+    private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
 
-    // 【0-GC 單場擊殺與爆頭計數】：僅在玩家死亡時執行 int +1，對槍過程 0 負擔
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchHeadshots = new(8);
 
-    // 【優化 5：防第 30 分敗方秒退吞分備份】記錄本場 1v1 雙方的 SteamID 與名稱
     private ulong _backupSteamIdT = 0;
     private string _backupNameT = "";
     private ulong _backupSteamIdCT = 0;
     private string _backupNameCT = "";
 
-    // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
 
-    // 【!rank 查詢冷卻紀錄】：每位玩家每 2 分鐘 / 120 秒只能查詢一次
     private const float RankQueryCooldownSeconds = 120.0f;
     private readonly Dictionary<ulong, float> _rankQueryCooldown = new(64);
 
-    // 【極速快取】：將查過的段位暫存於本地記憶體，達成 0 毫秒瞬間顯示
     private readonly ConcurrentDictionary<ulong, (EloQueryResponse Data, float ExpireTime)> _rankMemoryCache = new();
 
-    // =========================================================================
-    // 【完美相容 game_fixes 架構】：
-    // 徹底移除 MemoryFunctionVoid ("CCSPlayerController::SetClan") 底層 Detour Hook，
-    // 改用 1.0 秒輕量巡檢 + 事件即時同步 m_szClan，100% 不與 game_fixes 搶記憶體位址！
-    // =========================================================================
     private void InitEloClanTagSystem()
     {
-        Console.WriteLine("[LiteMatchManager] 段位 ClanTag 系統啟動成功 (game_fixes 相容零衝突模式)！");
+        try
+        {
+            SetClanFunc = new MemoryFunctionVoid<CCSPlayerController, uint, string>("CCSPlayerController::SetClan");
+            SetClanFunc.Hook(OnSetClanPre, HookMode.Pre);
+            _isSetClanHooked = true;
+            Console.WriteLine("[LiteMatchManager] CCSPlayerController::SetClan 攔截盾牌啟動成功 (MatchZy 同款安全模式)！");
+        }
+        catch (Exception ex)
+        {
+            _isSetClanHooked = false;
+            Console.WriteLine($"[LiteMatchManager] 提示：未掛載 CCSPlayerController::SetClan，將使用標準 m_szClan 同步 ({ex.Message})");
+        }
     }
 
     private void UnloadEloClanTagSystem()
     {
-        _playerRankClanTag.Clear();
-        _fetchingClanTags.Clear();
+        if (_isSetClanHooked && SetClanFunc != null)
+        {
+            try
+            {
+                SetClanFunc.Unhook(OnSetClanPre, HookMode.Pre);
+            }
+            catch { }
+            _isSetClanHooked = false;
+        }
     }
 
-    // 【由設定檔決定 ClanTag 顯示名稱】：根據玩家的 Elo 積分，直接回傳 LiteMatchManager.json 中你設定的 ClanTag 文字
+    private HookResult OnSetClanPre(DynamicHook hook)
+    {
+        return HookResult.Handled;
+    }
+
     private string GetConfiguredClanTagByElo(int elo)
     {
         if (elo >= 1800) return Config.ClanTag_TierS ?? "";
@@ -137,14 +148,12 @@ public partial class LiteMatchManager
         return Config.ClanTag_TierD ?? "";
     }
 
-    // 【100% 原生安全寫法】：直接設定 player.Clan 並呼叫 Utilities.SetStateChanged
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
     {
         if (_isServerShuttingDown) return;
         if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
             return;
 
-        // 尚未打滿 30 勝定級賽的玩家：savedTag 為 ""，targetTag 保持 "" (按 Tab 完全不顯示)
         string targetTag = _playerRankClanTag.TryGetValue(player.SteamID, out string? savedTag) && !string.IsNullOrEmpty(savedTag)
             ? savedTag
             : "";
@@ -156,7 +165,6 @@ public partial class LiteMatchManager
         }
     }
 
-    // 根據 SteamID 從快取清單中安全找出該名玩家並套用標籤 (防止跨執行緒指標失效)
     private void ApplyPlayerRankClanTagBySteamId(ulong steamId)
     {
         if (_isServerShuttingDown || steamId == 0) return;
@@ -171,7 +179,6 @@ public partial class LiteMatchManager
         }
     }
 
-    // 當玩家連線進入伺服器時，背景自動靜默抓取他的段位並掛上 Tab 記分板 + 預熱 !rank 快取
     private void FetchPlayerClanTagOnConnect(CCSPlayerController? player)
     {
         if (_isServerShuttingDown) return;
@@ -219,14 +226,12 @@ public partial class LiteMatchManager
         });
     }
 
-    // 玩家斷線時清理快取
     private void RemovePlayerClanTagCache(ulong steamId)
     {
         _playerRankClanTag.TryRemove(steamId, out _);
         _fetchingClanTags.TryRemove(steamId, out _);
     }
 
-    // 重置單場擊殺與爆頭統計
     private void ResetEloMatchStats()
     {
         _matchKills.Clear();
@@ -249,7 +254,6 @@ public partial class LiteMatchManager
         catch { }
     }
 
-    // 記錄正賽期間的擊殺與爆頭 (並同步備份 1v1 雙方資訊以防最後一分秒退)
     private void RecordEloKill(CCSPlayerController? attacker, CCSPlayerController? victim, bool isHeadshot)
     {
         if (!_isMatchLive || _isCountdownActive) return;
@@ -279,7 +283,6 @@ public partial class LiteMatchManager
         }
     }
 
-    // 檢查並觸發 30 勝完賽上傳
     private void TrySubmitEloMatchResult(
         int scoreT,
         int scoreCT,
