@@ -972,10 +972,20 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             TriggerMapChange(); return HookResult.Handled; 
         }
 
-        // 【呼叫 EloRankSystem.cs】：玩家輸入 !rank 或 !elo 查詢個人段位與積分
-        if (string.Equals(command, "rank", StringComparison.OrdinalIgnoreCase) || string.Equals(command, "elo", StringComparison.OrdinalIgnoreCase))
+        // 【呼叫 EloRankSystem.cs】：玩家輸入 !rank、!elo 或 !等級 查詢個人段位與積分
+        if (string.Equals(command, "rank", StringComparison.OrdinalIgnoreCase) || 
+            string.Equals(command, "elo", StringComparison.OrdinalIgnoreCase) || 
+            string.Equals(command, "等級", StringComparison.OrdinalIgnoreCase))
         {
             TriggerPlayerRankQuery(player);
+            return HookResult.Continue;
+        }
+
+        // 【新增】：玩家輸入 !top 或 !排行 查詢前三名
+        if (string.Equals(command, "top", StringComparison.OrdinalIgnoreCase) || 
+            string.Equals(command, "排行", StringComparison.OrdinalIgnoreCase))
+        {
+            TriggerTopRankQuery(player);
             return HookResult.Continue;
         }
 
