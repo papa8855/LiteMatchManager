@@ -1,7 +1,5 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 using System;
 using System.Collections.Concurrent;
@@ -87,14 +85,6 @@ public partial class LiteMatchManager
         return client;
     }
 
-    // =========================================================================
-    // 【100% 比照 MatchZy 穩定版 ClanTag 架構】：
-    // 只用 SetClanFunc.Hook 阻擋引擎覆寫 (HookResult.Handled)，
-    // 絕不呼叫危險的 SetClanFunc.Invoke()，改用原生 player.Clan + SetStateChanged，徹底杜絕閃退！
-    // =========================================================================
-    public MemoryFunctionVoid<CCSPlayerController, uint, string>? SetClanFunc;
-    private bool _isSetClanHooked = false;
-
     // 儲存玩家的段位標籤 (已滿 30 勝者存設定檔標籤；未滿 30 勝者存 "" 空字串，避免重複發送 HTTP 請求)
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
 
@@ -122,41 +112,17 @@ public partial class LiteMatchManager
     private readonly ConcurrentDictionary<ulong, (EloQueryResponse Data, float ExpireTime)> _rankMemoryCache = new();
 
     // =========================================================================
-    // 初始化與卸載 SetClan 記憶體攔截器 (由主程式 Load / Unload 呼叫)
+    // 初始化與卸載 ClanTag 系統 (已移除危險的底層 SetClan Gamedata Hook，100% 杜絕開服閃退)
     // =========================================================================
     private void InitEloClanTagSystem()
     {
-        try
-        {
-            SetClanFunc = new MemoryFunctionVoid<CCSPlayerController, uint, string>("CCSPlayerController::SetClan");
-            SetClanFunc.Hook(OnSetClanPre, HookMode.Pre);
-            _isSetClanHooked = true;
-            Console.WriteLine("[LiteMatchManager] CCSPlayerController::SetClan 攔截盾牌啟動成功 (MatchZy 同款安全模式)！");
-        }
-        catch (Exception ex)
-        {
-            _isSetClanHooked = false;
-            Console.WriteLine($"[LiteMatchManager] 提示：未掛載 CCSPlayerController::SetClan，將使用標準 m_szClan 同步 ({ex.Message})");
-        }
+        Console.WriteLine("[LiteMatchManager] Elo ClanTag 系統已啟動 (純原生 m_szClan 零閃退安全模式)！");
     }
 
     private void UnloadEloClanTagSystem()
     {
-        if (_isSetClanHooked && SetClanFunc != null)
-        {
-            try
-            {
-                SetClanFunc.Unhook(OnSetClanPre, HookMode.Pre);
-            }
-            catch { }
-            _isSetClanHooked = false;
-        }
-    }
-
-    // 【與 MatchZy 完全相同】：單純沒收 CS2 引擎修改標籤的權限，不跨 C++ 封裝任何指標，0 閃退風險！
-    private HookResult OnSetClanPre(DynamicHook hook)
-    {
-        return HookResult.Handled;
+        _playerRankClanTag.Clear();
+        _fetchingClanTags.Clear();
     }
 
     // 【由設定檔決定 ClanTag 顯示名稱】：根據玩家的 Elo 積分，直接回傳 LiteMatchManager.json 中你設定的 ClanTag 文字
@@ -169,7 +135,7 @@ public partial class LiteMatchManager
         return Config.ClanTag_TierD ?? "";
     }
 
-    // 【100% 採用 MatchZy 原生安全寫法】：直接設定 player.Clan 並呼叫 Utilities.SetStateChanged
+    // 【100% 原生安全寫法】：直接設定 player.Clan 並呼叫 Utilities.SetStateChanged
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
     {
         if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
