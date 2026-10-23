@@ -146,8 +146,8 @@ public partial class LiteMatchManager
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
 
-    // 【!rank 查詢冷卻紀錄】：每位玩家每 2 分鐘 / 120 秒只能查詢一次
-    private const float RankQueryCooldownSeconds = 120.0f;
+    // 【!rank 查詢冷卻紀錄】：每位玩家每 6 分鐘 / 60 秒只能查詢一次
+    private const float RankQueryCooldownSeconds = 60.0f;
     private readonly Dictionary<ulong, float> _rankQueryCooldown = new(64);
 
     // 【極速快取】：將查過的段位暫存於本地記憶體，達成 0 毫秒瞬間顯示
@@ -412,7 +412,7 @@ public partial class LiteMatchManager
         if ((totalLoserKills == 0 && loserScore == 0) ||
             (_liveMatchTargetPlayers == 4 && totalLoserKills < 2 && loserScore == 0))
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無有效交火數據，本局不計入排位積分");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效交火數據，本局不計入排位積分");
             return;
         }
 
