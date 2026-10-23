@@ -134,14 +134,13 @@ public class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.41_EloClanTag_ZeroDoubleDraw";
+    public override string ModuleVersion => "9.42_SafeColdBoot";
     public override string ModuleAuthor => "Optimized";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag+2v2語音分流+屍體清除)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag+2v2語音分流+屍體清除+開服防崩保護)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
     private string _cachedPrefix = "";
-    // 【.NET 10 升級】：集合表達式
     private List<string> _cachedGunMenuMessage = []; 
     private bool[] _spawnWeaponIsReplaceable = [];
     
@@ -149,11 +148,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private int _phaseStartScoreT = 0;
     private int _phaseStartScoreCT = 0;
     
-    // 【.NET 10 升級】：改用 FrozenSet 鎖死效能
     private FrozenSet<string> _readyCommandsSet = FrozenSet<string>.Empty;
     private FrozenSet<string> _gunMenuCommandsSet = FrozenSet<string>.Empty;
     
-    // 【.NET 10 升級】：靜態常數集合採用 FrozenSet 達成極致比對速度
     private static readonly FrozenSet<string> PistolWeapons = new[]
     {
         "weapon_usp_silencer", "weapon_glock", "weapon_deagle", "weapon_revolver",
@@ -162,8 +159,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
     
     private HashSet<ulong> _readyPlayers = new(64);
-    
-    // 【全新防禦機制】：名冊鎖定，阻斷 ChangeTeam 造成的無限迴圈當機
     private Dictionary<ulong, int> _lockedTeam = new(64);
     
     private Dictionary<ulong, int> _playerUnreadyTime = new(64); 
@@ -181,7 +176,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private bool _isCountdownActive = false;
     private bool _isChangingMap = false; 
     private int _liveMatchTargetPlayers = 0; 
-    private bool _isServerShuttingDown = false; 
+    private bool _isServerShuttingDown = true; // 預設為 true，直到 OnMapStart 或 hotReload 確認地圖已就緒才改為 false
     
     private CounterStrikeSharp.API.Modules.Timers.Timer? _privateCheckTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _publicBroadcastTimer;
@@ -214,11 +209,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public void OnConfigParsed(LiteMatchConfig config)
     {
         var caseInsensitiveDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        // 【.NET 10 升級】：字典解構
         foreach (var (key, value) in config.WeaponCommands) caseInsensitiveDict[key] = value;
         config.WeaponCommands = caseInsensitiveDict;
 
-        // 【.NET 10 升級】：將設定檔傳入的指令直接轉換為凍結集合並預熱 JIT
         _readyCommandsSet = config.ReadyCommands.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
         _gunMenuCommandsSet = config.GunMenuCommands.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
         _ = _readyCommandsSet.Contains("");
@@ -232,7 +225,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             {
                 mode.PrimaryWeaponsSet = (mode.PrimaryWeapons ?? []).ToFrozenSet(StringComparer.OrdinalIgnoreCase);
                 mode.SecondaryWeaponsSet = (mode.SecondaryWeapons ?? []).ToFrozenSet(StringComparer.OrdinalIgnoreCase);
-                // 預熱正賽階段武器查表，防止跳轉 Live 時首次觸發 JIT 編譯
                 _ = mode.PrimaryWeaponsSet.Contains("");
                 _ = mode.SecondaryWeaponsSet.Contains("");
             }
@@ -266,42 +258,48 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
-    // 【核心修正】：徹底移除工作坊單挑地圖內建的 game_player_equip 發槍實體，
-    // 阻斷地圖在第 0 幀偷塞 AK47 或洗掉玩家副武器導致的第 1 次錯誤拉槍動畫
-    private static void PurgeMapWeaponEntities()
+    // 【安全防崩保護】：徹底移除工作坊單挑地圖內建的 game_player_equip 發槍實體
+    private void PurgeMapWeaponEntities()
     {
-        foreach (var equip in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("game_player_equip"))
+        if (_isServerShuttingDown) return;
+        try
         {
-            if (equip is { IsValid: true })
+            foreach (var equip in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("game_player_equip"))
             {
-                equip.Remove();
+                if (equip is { IsValid: true })
+                {
+                    equip.Remove();
+                }
             }
         }
+        catch { }
     }
 
-    // 【新增功能 23】：徹底清除地面屍體模型 (cs_ragdoll)，防止窄道掩體被屍體擋住視線並減輕客戶端物理運算
-    private static void PurgeRagdolls()
+    // 【安全防崩保護】：徹底清除地面屍體模型 (cs_ragdoll)
+    private void PurgeRagdolls()
     {
-        foreach (var ragdoll in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("cs_ragdoll"))
+        if (_isServerShuttingDown) return;
+        try
         {
-            if (ragdoll is { IsValid: true })
+            foreach (var ragdoll in Utilities.FindAllEntitiesByDesignerName<CEntityInstance>("cs_ragdoll"))
             {
-                ragdoll.Remove();
+                if (ragdoll is { IsValid: true })
+                {
+                    ragdoll.Remove();
+                }
             }
         }
+        catch { }
     }
 
-    // 【新增功能 18】：1v1 與 2v2 語音自動分流控制
     private static void ApplyVoiceMode(bool enableAllTalk)
     {
         if (enableAllTalk)
         {
-            // 1v1 單挑、暖身或賽後 5 秒：開啟全頻語音讓雙方直接交流
             Server.ExecuteCommand("sv_alltalk 1; sv_full_alltalk 1; sv_deadtalk 1");
         }
         else
         {
-            // 2v2 團戰正賽期間：關閉全頻語音，僅限同隊語音報點 (死後仍可對同隊活人報點)
             Server.ExecuteCommand("sv_alltalk 0; sv_full_alltalk 0; sv_deadtalk 1");
         }
     }
@@ -334,13 +332,18 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private void RefreshActivePlayers()
     {
         _serverPlayersCache.Clear();
-        foreach (var p in Utilities.GetPlayers())
+        if (_isServerShuttingDown) return;
+        try
         {
-            if (p is { IsValid: true, Handle: not 0 })
+            foreach (var p in Utilities.GetPlayers())
             {
-                _serverPlayersCache.Add(p);
+                if (p is { IsValid: true, Handle: not 0 })
+                {
+                    _serverPlayersCache.Add(p);
+                }
             }
         }
+        catch { }
     }
 
     private void ShowHud(string html, float duration)
@@ -364,6 +367,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void OnTick()
     {
+        if (_isServerShuttingDown) return;
+
         if (!string.IsNullOrEmpty(_activeCenterMessage))
         {
             if (Server.CurrentTime <= _centerMessageExpiration)
@@ -386,7 +391,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void CheckPendingReminders()
     {
-        if (_pendingInitialReminders.Count == 0) return;
+        if (_isServerShuttingDown || _pendingInitialReminders.Count == 0) return;
 
         float currentTime = Server.CurrentTime;
         _reminderRemoveCache.Clear();
@@ -414,7 +419,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
         }
 
-        // 【.NET 10 升級】：字典解構
         foreach (var (key, value) in _pendingInitialReminders)
         {
             if (currentTime >= value)
@@ -435,9 +439,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         Console.WriteLine("=================================================");
         Console.WriteLine("  LiteMatchManager (純淨效能極致版) 啟動！");
         Console.WriteLine("=================================================");
-
-        _isServerShuttingDown = false;
-        _cvWarmupPauseTimer = ConVar.Find("mp_warmup_pausetimer");
 
         // 【啟動 0-Timer 常駐段位 ClanTag 攔截器】
         InitEloClanTagSystem();
@@ -477,14 +478,14 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 if (_isMatchLive && _readyPlayers.Contains(steamId))
                 {
                     _readyPlayers.Remove(steamId);
-                    _lockedTeam.Remove(steamId); // 釋放名冊鎖
+                    _lockedTeam.Remove(steamId);
 
                     if (IsMatchOver()) return HookResult.Continue;
 
                     if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
                     {
                         Server.PrintToChatAll($" {_cachedPrefix} 玩 家 {ChatColors.Gold}{pName} {ChatColors.White}斷 線，比 賽 強 制 終 止");
-                        Server.NextFrame(AbortMatch); // 【防記憶體報錯】必須包裝在 NextFrame 內
+                        Server.NextFrame(AbortMatch);
                     }
                     else
                     {
@@ -517,12 +518,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 ulong steamId = player.SteamID;
                 int newTeam = @event.Team; 
 
-                // 換隊時同步維持該玩家的段位 ClanTag
                 Server.NextFrame(() => ApplyPlayerRankClanTag(player));
                 
                 if (newTeam is 0 or 1) 
                 {
-                    // 【修正】：玩家跳去觀戰或選隊伍介面的瞬間，直接強制清除他的畫面，防止白框殘留
                     player.PrintToCenterHtml("&#8203;", 0);
 
                     _pendingInitialReminders.Remove(steamId);
@@ -532,7 +531,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     if (_isMatchLive && _readyPlayers.Contains(steamId))
                     {
                         _readyPlayers.Remove(steamId);
-                        _lockedTeam.Remove(steamId); // 釋放名冊鎖
+                        _lockedTeam.Remove(steamId);
                         
                         if (IsMatchOver()) return HookResult.Continue;
                         
@@ -558,17 +557,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 {
                     if (_isMatchLive)
                     {
-                        // 1. 比賽中：原本已準備的玩家，企圖換到敵方隊伍
                         if (_readyPlayers.Contains(steamId))
                         {
-                            // 【核心防護】對照陣營名冊，阻斷 ChangeTeam 造成的無限迴圈
                             if (_lockedTeam.TryGetValue(steamId, out int lockedTeam))
                             {
                                 if (newTeam != lockedTeam)
                                 {
                                     Server.NextFrame(() => {
                                         if (player.IsValid) {
-                                            player.ChangeTeam((CsTeam)lockedTeam); // 踢回名冊指定隊伍
+                                            player.ChangeTeam((CsTeam)lockedTeam);
                                             player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}對 戰 進 行 中，無 法 切 換 隊 伍");
                                         }
                                     });
@@ -576,7 +573,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                                 }
                             }
                         }
-                        // 2. 比賽中：未準備的玩家試圖加入
                         else 
                         {
                             if (_liveMatchTargetPlayers == 2)
@@ -610,16 +606,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                                 else 
                                 {
                                     _readyPlayers.Add(steamId);
-                                    _lockedTeam[steamId] = newTeam; // 補位成功，寫入名冊鎖
+                                    _lockedTeam[steamId] = newTeam;
                                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}玩 家 {player.PlayerName} {ChatColors.White}成 功 補 位 加 入 團 戰 比 賽");
                                 }
                             }
                         }
                         Server.NextFrame(CheckPhaseWin);
                     }
-                    else // !_isMatchLive
+                    else
                     {
-                        // 3. 非比賽期間：檢查是否超過滿員設定
                         int currentTeamCount = 0;
                         foreach (var p in _serverPlayersCache)
                         {
@@ -644,14 +639,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Continue;
         }, HookMode.Post);
 
-        // 【新增】：在每回合預備階段 (玩家重生前) 優先掃除地圖重生出來的 game_player_equip 發槍器
         RegisterEventHandler<EventRoundPrestart>((@event, info) =>
         {
             PurgeMapWeaponEntities();
             return HookResult.Continue;
         }, HookMode.Pre);
 
-        // 【新增功能 23 + 32】：0.5 秒清除屍體 + 呼叫 EloRankSystem.cs 記錄擊殺與爆頭
         RegisterEventHandler<EventPlayerDeath>((@event, info) =>
         {
             if (!_isServerShuttingDown)
@@ -693,12 +686,20 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             });
         });
 
-        Server.NextFrame(() =>
+        // 【核心修復】：只有在伺服器已開好、手動熱重載插件 (hotReload == true) 時才立即掃描實體與玩家！
+        // 避免冷啟動開服瞬間地圖尚未載入就呼叫 FindAllEntities / GetPlayers / Server.CurrentTime 導致伺服器直接閃退關閉！
+        if (hotReload)
         {
-            PurgeMapWeaponEntities();
-            RefreshActivePlayers();
-            foreach (var p in _serverPlayersCache) FetchPlayerClanTagOnConnect(p);
-        });
+            _isServerShuttingDown = false;
+            _cvWarmupPauseTimer = ConVar.Find("mp_warmup_pausetimer");
+            ResetMatchState();
+            Server.NextFrame(() =>
+            {
+                PurgeMapWeaponEntities();
+                RefreshActivePlayers();
+                foreach (var p in _serverPlayersCache) FetchPlayerClanTagOnConnect(p);
+            });
+        }
     }
 
     private int GetDynamicRequiredPlayers()
@@ -766,7 +767,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     {
         if (!_isMatchLive || _isChangingMap) return HookResult.Continue;
 
-        // 【新增功能 18】：比賽結束最後 5 秒換圖期間，自動切回 sv_alltalk 1 讓全場玩家賽後交流
         Server.NextFrame(() => ApplyVoiceMode(enableAllTalk: true));
 
         int scoreT = 0, scoreCT = 0;
@@ -800,7 +800,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}{winnerName} {ChatColors.Gold}以 {ChatColors.Green} {winnerScore} : {loserScore} {ChatColors.Gold}贏得了最終勝利");
 
-        // 【呼叫 EloRankSystem.cs】：檢查並上傳 30 勝完賽 Elo 與段位
         TrySubmitEloMatchResult(scoreT, scoreCT, winnerScore, loserScore, winnerName, loserName, playerT, playerCT);
 
         TriggerMapChange();
@@ -834,7 +833,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         });
     }
 
-    // 【核心防抖動】：在玩家按下選隊指令的瞬間直接攔截，防止引擎先生成角色肉體再於下一幀處死踢回觀戰
     private HookResult OnJoinTeam(CCSPlayerController? player, CommandInfo info)
     {
         if (player is not { IsValid: true, Handle: not 0 } || player.IsBot) return HookResult.Continue;
@@ -842,7 +840,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         string arg = info.GetArg(1);
         if (!int.TryParse(arg, out int targetTeam)) return HookResult.Continue;
 
-        // 若選擇觀戰 (1)，直接放行交由 EventPlayerTeam 處理取消準備或放棄比賽
         if (targetTeam == 1) return HookResult.Continue;
 
         ulong steamId = player.SteamID;
@@ -851,7 +848,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             if (_isMatchLive)
             {
-                // 1. 比賽中：場上已準備玩家企圖換隊，直接阻擋，完全不觸發換隊與重生
                 if (_readyPlayers.Contains(steamId))
                 {
                     if (_lockedTeam.TryGetValue(steamId, out int lockedTeam) && targetTeam != lockedTeam)
@@ -861,7 +857,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     }
                     return HookResult.Continue;
                 }
-                // 2. 比賽中：新進玩家或觀戰者試圖加入
                 else
                 {
                     if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
@@ -910,7 +905,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     }
                 }
             }
-            else // !_isMatchLive (非比賽期間：檢查是否超過滿員設定)
+            else
             {
                 if (targetTeam is 2 or 3)
                 {
@@ -952,19 +947,16 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         if (!isCommand) 
         {
-            // 【.NET 10 升級】：改用 Span 切片去除多餘符號，0 記憶體分配
             string message = rawArg.AsSpan().Trim(" \"").ToString(); 
             if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
             string playerName = player.PlayerName ?? "";
             string nameColor = player.TeamNum switch { 1 => $"{ChatColors.Grey}", 2 => "\x10", 3 => "\x0B", _ => $"{ChatColors.White}" };
             string formattedMessage = $" {ChatColors.White}[所有人]{ChatColors.White} {nameColor}{playerName}{ChatColors.White}：{message}";
 
-            // 將 Utilities.GetPlayers() 替換為 0 GC 高效能快取
             foreach (var p in _serverPlayersCache) if (p is { IsValid: true, IsBot: false }) p.PrintToChat(formattedMessage);
             return HookResult.Handled; 
         }
 
-        // 【.NET 10 升級】：改用 Span 切片並移除多餘的 .ToLower()，配合 IgnoreCase 集合達成真正 0 額外配置
         string command = rawArg.AsSpan().Trim(" \"!/").ToString();
 
         if (string.Equals(command, "nextmap", StringComparison.OrdinalIgnoreCase) && AdminManager.PlayerHasPermissions(player, "@css/root"))
@@ -972,7 +964,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             TriggerMapChange(); return HookResult.Handled; 
         }
 
-        // 【呼叫 EloRankSystem.cs】：玩家輸入 !rank 或 !elo 查詢個人段位與積分
         if (string.Equals(command, "rank", StringComparison.OrdinalIgnoreCase) || string.Equals(command, "elo", StringComparison.OrdinalIgnoreCase))
         {
             TriggerPlayerRankQuery(player);
@@ -983,7 +974,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             if (!_isMatchLive) 
             {
-                // 【治本完美解法】：將 !R 指令的處理推遲一幀，完美錯開重生裝備載入的 Tick 衝突
                 Server.NextFrame(() => {
                     if (player is { IsValid: true })
                     {
@@ -1004,12 +994,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             if (_gunMenuCommandsSet.Contains(command))
             {
                 OnGsCommand(player); 
-                return HookResult.Continue; // 保留 Continue，讓全服看到指令
+                return HookResult.Continue;
             }
             if (Config.WeaponCommands.TryGetValue(command, out string? realWeaponName))
             {
                 TryGiveWeaponByCommand(player, realWeaponName);
-                return HookResult.Continue; // 保留 Continue，讓全服看到指令
+                return HookResult.Continue;
             }
         }
         
@@ -1048,7 +1038,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         if (_isChangingMap || Config.MapList is null || Config.MapList.Count == 0) return;
         _isChangingMap = true; 
         
-        // 【.NET 10 升級】：改用 Random.Shared + Span 切片，徹底消除 Split 帶來的字串陣列分配
         ReadOnlySpan<char> selectedMapSpan = Config.MapList[Random.Shared.Next(Config.MapList.Count)].AsSpan();
         int colonIndex = selectedMapSpan.IndexOf(':');
         string mapName = colonIndex == -1 ? selectedMapSpan.ToString() : selectedMapSpan[..colonIndex].ToString();
@@ -1158,11 +1147,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             
             _playerPrimary.Clear();
             _playerSecondary.Clear();
-            _lockedTeam.Clear(); // 清空舊名冊
+            _lockedTeam.Clear();
             _pendingInitialReminders.Clear();
             ResetEloMatchStats();
             
-            // 【產生名冊鎖】：開賽瞬間紀錄所有存活玩家的隊伍
             foreach (var p in _serverPlayersCache)
             {
                 if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
@@ -1178,14 +1166,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             string phaseName = Config.MatchModes.Count > 0 ? Config.MatchModes[0].Name : "預設";
             string displayLimit = Config.MatchModes.Count > 0 ? Config.MatchModes[0].DisplayTarget : "20";
 
-            // 1. 關閉所有等待與催促的計時器
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
             
-            // ==========================================
-            // 【.NET 10 效能版：0.5秒緩衝 + 雙重0 GC快取 (包含聊天室321)】
-            // ==========================================
             string precompiledLine1 = string.Format(Config.HudHtml_Round1_Line1, modeText);
             string precompiledLine2 = string.Format(Config.HudHtml_Round1_Line2, displayLimit);
             const string popupSoundCmd = "play sounds/ui/panorama/popup_reveal_01.vsnd";
@@ -1193,35 +1177,25 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             int countdown = (int)Config.HudDuration_MatchStart; 
             if (countdown <= 0) countdown = 3;
 
-            // HUD 與「聊天室廣播」雙重快取！
             string[] precompiledHuds = new string[countdown + 1];
-            string[] precompiledChats = new string[countdown + 1]; // 專門給聊天室用的陣列
+            string[] precompiledChats = new string[countdown + 1];
             
             for (int i = 1; i <= countdown; i++)
             {
-                // HUD 畫面快取
                 string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#DF3935'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
-                
-                // 聊天室廣播快取 (把 3、2、1 的紅字也準備好)
                 precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.LightRed}{i}{ChatColors.White} 秒 ...";
             }
 
-            // 第 0 秒瞬間：只發送準備提示，給玩家 0.5 秒心理準備
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 雙 方 皆 已 準 備，即 將 開 戰 ...");
 
-            // 2. 將倒數邏輯包裝成 Action
             Action tickLogic = () => 
             {
                 if (countdown > 0)
                 {
-                    // A. HUD 畫面同步（最後 1 秒使用 0.95f，確保在下一秒執行 exec live.cfg 前自然收尾，絕不重疊）
                     ShowHud(precompiledHuds[countdown], countdown == 1 ? 0.95f : 1.1f); 
-                    
-                    // B. 聊天室 3、2、1 同步廣播 (直接讀取快取，0效能消耗)
                     Server.PrintToChatAll(precompiledChats[countdown]);
                     
-                    // C. 音效同步
                     foreach (var p in _serverPlayersCache)
                     {
                         if (p is { IsValid: true, IsBot: false }) p.ExecuteClientCommand(popupSoundCmd);
@@ -1231,20 +1205,15 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 else
                 {
                     _isCountdownActive = false;
-
-                    // 確保倒數 HUD 已完全收尾，避免與下一幀的 exec live.cfg 撞在同一 Tick
                     ClearHudImmediate();
 
-                    // 正式開賽廣播與後台
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
                     if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
 
-                    // 刷新比賽、掃除地圖發槍實體，並根據 1v1 / 2v2 自動分流語音設定
                     bool is1v1 = _liveMatchTargetPlayers == 2;
                     Server.NextFrame(() => { 
                         PurgeMapWeaponEntities();
                         Server.ExecuteCommand($"exec {Config.LiveConfigName}");
-                        // 【新增功能 18】：在 live.cfg 載入後下一幀設定語音 (1v1 全頻聊天 / 2v2 僅同隊報點)
                         Server.NextFrame(() => ApplyVoiceMode(enableAllTalk: is1v1));
                     });
                     
@@ -1253,11 +1222,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 }
             };
 
-            // 啟動 0.5 秒黃金緩衝接力計時器
             _liveTimer?.Kill();
             _liveTimer = AddTimer(0.5f, () => 
             {
-                tickLogic(); // 0.5秒後觸發倒數 3
+                tickLogic();
 
                 if (countdown >= 0) 
                 {
@@ -1268,7 +1236,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
-    // 【核心修正】：解決 CS2 引擎將 USP 與 M4A1-S 的 DesignerName 回傳為 hkp2000 / m4a1 導致誤判重發的問題
     private static string GetActualWeaponName(CBasePlayerWeapon weapon)
     {
         string dName = weapon.DesignerName;
@@ -1277,18 +1244,14 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         ushort defIndex = weapon.AttributeManager.Item.ItemDefinitionIndex;
         return defIndex switch
         {
-            60 => "weapon_m4a1_silencer", // M4A1-S
-            61 => "weapon_usp_silencer",  // USP-S
-            63 => "weapon_cz75a",         // CZ75-Auto
-            64 => "weapon_revolver",      // R8 Revolver
+            60 => "weapon_m4a1_silencer",
+            61 => "weapon_usp_silencer",
+            63 => "weapon_cz75a",
+            64 => "weapon_revolver",
             _ => dName
         };
     }
 
-    // 【零干擾差量配槍核心】：
-    // 1. 若上一局存活且武器完全符合 -> 0 動作 (0 拔槍動畫)
-    // 2. 若上一局陣亡重生 (身上僅有小刀，無錯誤主副武器) -> 絕不呼叫 RemoveWeapons() 洗掉小刀，直接以「先主武、後副武」順序補齊缺槍
-    // 3. 若跨階段或持有錯誤武器 -> 安全呼叫 RemoveWeapons() 後，同樣以「刀 -> 先主武 -> 後副武」順序一次到位
     private static void ApplySmartLoadout(
         CCSPlayerController player,
         bool hasKnife,
@@ -1307,14 +1270,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         if (!hasWrongPri && !hasWrongSec)
         {
-            // 身上沒有任何錯誤武器（完全相符的贏家，或剛重生只有一把小刀的輸家）：直接差量補齊！
             if (!hasKnife) player.GiveNamedItem("weapon_knife");
             if (!priMatches && !string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
             if (!secMatches && !string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
         }
         else
         {
-            // 身上帶有舊階段或錯誤的武器：統一使用底層安全的 RemoveWeapons() 卸載，並先給主武器再給副武器
             player.RemoveWeapons();
             player.GiveNamedItem("weapon_knife");
             if (!string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
@@ -1322,7 +1283,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
-    // 【智慧護甲補發】：僅在護甲不滿 100 或缺少頭盔時才呼叫 GiveNamedItem，避免每回合無條件生成多餘實體
     private static void ApplySmartArmor(CCSPlayerController player, CCSPlayerPawn pawn, int armorMode)
     {
         if (armorMode <= 0)
@@ -1359,15 +1319,11 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
         
         Server.NextFrame(() => {
-            // 【新增功能 23】：暖身期間無限復活時，順手清除場上殘留的舊屍體
             if (!_isMatchLive) PurgeRagdolls();
 
             if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
-            
-            // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
             if (player.TeamNum is not 2 and not 3) return;
 
-            // 掃描玩家身上目前持有的武器真實名稱與數量 (0-GC)
             string currentPri = "";
             string currentSec = "";
             int priCount = 0;
@@ -1407,7 +1363,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 
                 pawn.Health = phase.Health;
 
-                // 決定當前階段應該持有的副武器與主武器（優先讀取玩家指令記憶，如 !dg）
                 string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
                 if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
                     secToGive = prefSec;
@@ -1423,7 +1378,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
             else
             {
-                // 暖身模式：計算目標武器並智慧差量保留
                 bool hasPrefPri = _playerPrimary.TryGetValue(steamId, out string? prefPri);
                 bool hasPrefSec = _playerSecondary.TryGetValue(steamId, out string? prefSec);
 
@@ -1466,8 +1420,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
-        // 【核心防崩潰】：將指令換槍的檢查、安全卸載與發放整個推遲到 NextFrame 執行，
-        // 徹底消除在 OnPlayerSay 網路封包中途直接砍實體造成的 CopyExistingEntity 客戶端崩潰！
         Server.NextFrame(() => {
             if (player is not { IsValid: true, PawnIsAlive: true, TeamNum: 2 or 3 } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
             if (pawn.WeaponServices?.MyWeapons is not { } weapons) return;
@@ -1493,11 +1445,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             string targetSec = isNewPistol ? newWeapon : currentSec;
             string targetPri = isNewPistol ? currentPri : newWeapon;
 
-            // 若手上已經是同一把槍，直接不動作
             if (isNewPistol && string.Equals(currentSec, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
             if (!isNewPistol && string.Equals(currentPri, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
 
-            // 統一使用官方底層安全的 RemoveWeapons() 卸載後重給，並以「先主武、後副武」順序發放
             int currentArmor = pawn.ArmorValue;
             bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>()?.HasHelmet ?? false;
 
@@ -1524,7 +1474,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void CheckAndWarnUnreadyPlayers()
     {
-        if (_isMatchLive) return; 
+        if (_isServerShuttingDown || _isMatchLive) return; 
 
         foreach (var p in _serverPlayersCache)
         {
@@ -1562,7 +1512,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastWaitingMessage()
     {
-        if (_isMatchLive) return;
+        if (_isServerShuttingDown || _isMatchLive) return;
         
         int totalPlayers = 0;
         foreach (var p in _serverPlayersCache)
@@ -1581,7 +1531,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastUnreadyPlayers()
     {
-        if (_isMatchLive) return; 
+        if (_isServerShuttingDown || _isMatchLive) return; 
         
         _unreadyNamesCache.Clear();
         int totalPlayers = 0; 
@@ -1624,7 +1574,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _phaseStartScoreCT = 0;
         _liveMatchTargetPlayers = 0; 
         _readyPlayers.Clear();
-        _lockedTeam.Clear(); // 重置名冊
+        _lockedTeam.Clear();
         _playerUnreadyTime.Clear();
         _playerJoinTime.Clear(); 
         
@@ -1650,7 +1600,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private HookResult OnEventRoundStart(EventRoundStart @event, GameEventInfo info)
     {
-        // 確保每回合開始時地圖沒有殘留的 game_player_equip 發槍器
         PurgeMapWeaponEntities();
 
         if (!_isMatchLive || _isCountdownActive || Config.MatchModes.Count == 0 || _currentPhaseIndex >= Config.MatchModes.Count) return HookResult.Continue;
