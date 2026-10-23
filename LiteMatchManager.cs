@@ -866,7 +866,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 {
                     if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
                     {
-                        if (player.TeamNum == 0) player.ChangeTeam(CsTeam.Spectator);
+                        player.ChangeTeam(CsTeam.Spectator);
                         player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}單 挑 比 賽 進 行 中，不 開 放 加 入");
                         return HookResult.Stop;
                     }
@@ -887,7 +887,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                             }
                             if (countT >= liveTeamMax && countCT >= liveTeamMax)
                             {
-                                if (player.TeamNum == 0) player.ChangeTeam(CsTeam.Spectator);
+                                player.ChangeTeam(CsTeam.Spectator);
                                 player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}該 隊 伍 補 位 已 滿，無 法 加 入");
                                 return HookResult.Stop;
                             }
@@ -903,7 +903,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
                         if (currentCount >= liveTeamMax)
                         {
-                            if (player.TeamNum == 0) player.ChangeTeam(CsTeam.Spectator);
+                            player.ChangeTeam(CsTeam.Spectator);
                             player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}該 隊 伍 補 位 已 滿，無 法 加 入");
                             return HookResult.Stop;
                         }
@@ -923,7 +923,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
                     if (currentTeamCount >= Config.MaxPlayersPerTeam)
                     {
-                        if (player.TeamNum == 0) player.ChangeTeam(CsTeam.Spectator);
+                        player.ChangeTeam(CsTeam.Spectator);
                         string teamName = targetTeam == 2 ? "恐怖份子 (T)" : "反恐小組 (CT)";
                         player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}加 入 失 敗！{teamName} 已 經 滿 員 ( 最 多 {ChatColors.Green}{Config.MaxPlayersPerTeam}{ChatColors.Orange} 人 )");
                         return HookResult.Stop;
