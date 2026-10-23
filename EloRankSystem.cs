@@ -15,28 +15,58 @@ using System.Threading.Tasks;
 namespace LiteMatchManager;
 
 // =========================================
-// 遠端 PHP Elo API 傳輸與回傳結構
+// 遠端 PHP Elo API 傳輸與回傳結構 (同時支援 1v1 與 2v2)
 // =========================================
+public class EloPlayerMatchStat
+{
+    [JsonPropertyName("steamid")] public string SteamId { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("kills")] public int Kills { get; set; }
+    [JsonPropertyName("deaths")] public int Deaths { get; set; }
+    [JsonPropertyName("hs")] public int Hs { get; set; }
+}
+
+public class EloPlayerResult
+{
+    [JsonPropertyName("steamid")] public string SteamId { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("old_elo")] public int OldElo { get; set; }
+    [JsonPropertyName("new_elo")] public int NewElo { get; set; }
+    [JsonPropertyName("delta")] public int Delta { get; set; }
+    [JsonPropertyName("rank")] public string Rank { get; set; } = "";
+    [JsonPropertyName("hs_rate")] public double HsRate { get; set; }
+}
+
 public class EloReportPayload
 {
     [JsonPropertyName("api_key")] public string ApiKey { get; set; } = "";
     [JsonPropertyName("map_name")] public string MapName { get; set; } = "";
+    [JsonPropertyName("mode")] public string Mode { get; set; } = "1v1";
     [JsonPropertyName("target_score")] public int TargetScore { get; set; } = 30;
+    [JsonPropertyName("winner_score")] public int WinnerScore { get; set; }
+    [JsonPropertyName("loser_score")] public int LoserScore { get; set; }
+
+    // 1v1 傳統欄位 (保持向後相容)
     [JsonPropertyName("winner_steamid")] public string WinnerSteamId { get; set; } = "";
     [JsonPropertyName("winner_name")] public string WinnerName { get; set; } = "";
-    [JsonPropertyName("winner_score")] public int WinnerScore { get; set; }
     [JsonPropertyName("winner_kills")] public int WinnerKills { get; set; }
     [JsonPropertyName("winner_hs")] public int WinnerHs { get; set; }
     [JsonPropertyName("loser_steamid")] public string LoserSteamId { get; set; } = "";
     [JsonPropertyName("loser_name")] public string LoserName { get; set; } = "";
-    [JsonPropertyName("loser_score")] public int LoserScore { get; set; }
     [JsonPropertyName("loser_kills")] public int LoserKills { get; set; }
     [JsonPropertyName("loser_hs")] public int LoserHs { get; set; }
+
+    // 1v1 & 2v2 通用雙陣營玩家清單
+    [JsonPropertyName("winners")] public List<EloPlayerMatchStat> Winners { get; set; } = [];
+    [JsonPropertyName("losers")] public List<EloPlayerMatchStat> Losers { get; set; } = [];
 }
 
 public class EloReportResponse
 {
     [JsonPropertyName("success")] public bool Success { get; set; }
+    [JsonPropertyName("mode")] public string Mode { get; set; } = "1v1";
+
+    // 1v1 回傳欄位
     [JsonPropertyName("winner_old_elo")] public int WinnerOldElo { get; set; }
     [JsonPropertyName("winner_new_elo")] public int WinnerNewElo { get; set; }
     [JsonPropertyName("winner_delta")] public int WinnerDelta { get; set; }
@@ -47,6 +77,10 @@ public class EloReportResponse
     [JsonPropertyName("loser_delta")] public int LoserDelta { get; set; }
     [JsonPropertyName("loser_rank")] public string LoserRank { get; set; } = "";
     [JsonPropertyName("loser_hs_rate")] public double LoserHsRate { get; set; }
+
+    // 2v2 / 多人回傳清單
+    [JsonPropertyName("winners")] public List<EloPlayerResult>? Winners { get; set; }
+    [JsonPropertyName("losers")] public List<EloPlayerResult>? Losers { get; set; }
 }
 
 public class EloQueryResponse
@@ -101,15 +135,13 @@ public partial class LiteMatchManager
     // 【優化 3：併發防重鎖】防止同一玩家在網路回應期間重複觸發背景 API 請求
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
 
-    // 【0-GC 單場擊殺與爆頭計數】：僅在玩家死亡時執行 int +1，對槍過程 0 負擔
+    // 【0-GC 單場擊殺、死亡與爆頭計數】：僅在玩家死亡時執行 int +1，對槍過程 0 負擔
     private readonly Dictionary<ulong, int> _matchKills = new(8);
+    private readonly Dictionary<ulong, int> _matchDeaths = new(8);
     private readonly Dictionary<ulong, int> _matchHeadshots = new(8);
 
-    // 【優化 5：防第 30 分敗方秒退吞分備份】記錄本場 1v1 雙方的 SteamID 與名稱
-    private ulong _backupSteamIdT = 0;
-    private string _backupNameT = "";
-    private ulong _backupSteamIdCT = 0;
-    private string _backupNameCT = "";
+    // 【優化 5：支援 1v1 與 2v2 防第 30 分敗方秒退吞分備份】記錄本場參賽者的隊伍與名稱
+    private readonly Dictionary<ulong, (int Team, string Name)> _matchParticipants = new(8);
 
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
@@ -268,13 +300,10 @@ public partial class LiteMatchManager
     private void ResetEloMatchStats()
     {
         _matchKills.Clear();
+        _matchDeaths.Clear();
         _matchHeadshots.Clear();
+        _matchParticipants.Clear();
         _hasSubmittedElo = false;
-
-        _backupSteamIdT = 0;
-        _backupNameT = "";
-        _backupSteamIdCT = 0;
-        _backupNameCT = "";
 
         // 【優化 2】：放寬換圖初期的判定時間至 30 秒，確保工作坊地圖載入較慢時也能乾淨重置舊冷卻
         if (!_isMatchLive && Server.CurrentTime < 30.0f)
@@ -284,7 +313,7 @@ public partial class LiteMatchManager
         }
     }
 
-    // 記錄正賽期間的擊殺與爆頭 (並同步備份 1v1 雙方資訊以防最後一分秒退)
+    // 記錄正賽期間的擊殺、死亡與爆頭 (並同步備份 1v1 / 2v2 參賽者資訊以防最後一分秒退)
     private void RecordEloKill(CCSPlayerController? attacker, CCSPlayerController? victim, bool isHeadshot)
     {
         if (!_isMatchLive || _isCountdownActive) return;
@@ -300,22 +329,25 @@ public partial class LiteMatchManager
                 _matchHeadshots[aId] = _matchHeadshots.GetValueOrDefault(aId) + 1;
             }
 
-            // 【優化 5】：在 1v1 正賽交火期間，隨時備份 T / CT 雙方的 SteamID 與名稱
-            if (_liveMatchTargetPlayers == 2)
+            if (attacker.TeamNum is 2 or 3)
             {
-                if (attacker.TeamNum == 2) { _backupSteamIdT = aId; _backupNameT = attacker.PlayerName ?? "Player"; }
-                else if (attacker.TeamNum == 3) { _backupSteamIdCT = aId; _backupNameCT = attacker.PlayerName ?? "Player"; }
+                _matchParticipants[aId] = (attacker.TeamNum, attacker.PlayerName ?? "Player");
+            }
 
-                if (!victim.IsBot && victim.SteamID > 0)
+            if (!victim.IsBot && victim.SteamID > 0)
+            {
+                ulong vId = victim.SteamID;
+                _matchDeaths[vId] = _matchDeaths.GetValueOrDefault(vId) + 1;
+
+                if (victim.TeamNum is 2 or 3)
                 {
-                    if (victim.TeamNum == 2) { _backupSteamIdT = victim.SteamID; _backupNameT = victim.PlayerName ?? "Player"; }
-                    else if (victim.TeamNum == 3) { _backupSteamIdCT = victim.SteamID; _backupNameCT = victim.PlayerName ?? "Player"; }
+                    _matchParticipants[vId] = (victim.TeamNum, victim.PlayerName ?? "Player");
                 }
             }
         }
     }
 
-    // 檢查並觸發 30 勝完賽上傳 (僅限 1v1 且打滿 FinalMatchWinScore，含敗方秒退防吞分機制)
+    // 檢查並觸發 30 勝完賽上傳 (同時支援 1v1 與 2v2，含敗方秒退防吞分機制)
     private void TrySubmitEloMatchResult(
         int scoreT,
         int scoreCT,
@@ -327,7 +359,7 @@ public partial class LiteMatchManager
         CCSPlayerController? playerCT)
     {
         if (_hasSubmittedElo ||
-            _liveMatchTargetPlayers != 2 ||
+            (_liveMatchTargetPlayers != 2 && _liveMatchTargetPlayers != 4) ||
             winnerScore < Config.FinalMatchWinScore ||
             scoreT == scoreCT ||
             string.IsNullOrWhiteSpace(Config.StatsApiUrl))
@@ -335,62 +367,108 @@ public partial class LiteMatchManager
             return;
         }
 
-        // 【優化 5】：優先使用場上實體；若敗方在第 30 分死掉瞬間秒退導致 playerT/CT 為 null，自動啟用備份名冊！
-        ulong steamIdT = playerT is { SteamID: > 0 } ? playerT.SteamID : _backupSteamIdT;
-        ulong steamIdCT = playerCT is { SteamID: > 0 } ? playerCT.SteamID : _backupSteamIdCT;
+        // 1. 先將目前還在場上的 T / CT 玩家同步進參賽名冊
+        foreach (var p in _serverPlayersCache)
+        {
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, SteamID: > 0, TeamNum: 2 or 3 })
+            {
+                _matchParticipants[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+            }
+        }
 
-        if (steamIdT == 0 || steamIdCT == 0 || steamIdT == steamIdCT)
+        bool isTWinner = scoreT > scoreCT;
+        int winTeam = isTWinner ? 2 : 3;
+        int loseTeam = isTWinner ? 3 : 2;
+
+        var winnersList = new List<EloPlayerMatchStat>(2);
+        var losersList = new List<EloPlayerMatchStat>(2);
+
+        int totalWinnerKills = 0;
+        int totalLoserKills = 0;
+
+        foreach (var (sid, info) in _matchParticipants)
+        {
+            if (info.Team != winTeam && info.Team != loseTeam) continue;
+
+            int k = _matchKills.GetValueOrDefault(sid);
+            int d = _matchDeaths.GetValueOrDefault(sid);
+            int hs = _matchHeadshots.GetValueOrDefault(sid);
+
+            var stat = new EloPlayerMatchStat
+            {
+                SteamId = sid.ToString(),
+                Name = info.Name,
+                Kills = k,
+                Deaths = d,
+                Hs = hs
+            };
+
+            if (info.Team == winTeam)
+            {
+                winnersList.Add(stat);
+                totalWinnerKills += k;
+            }
+            else
+            {
+                losersList.Add(stat);
+                totalLoserKills += k;
+            }
+        }
+
+        // 若因極端情況名冊人數不足，直接安全跳出
+        if (winnersList.Count == 0 || losersList.Count == 0) return;
+
+        // 若為 2v2 模式，確保雙方皆有至少 2 名參賽紀錄 (或場上 + 備份湊齊)
+        if (_liveMatchTargetPlayers == 4 && (winnersList.Count < 2 || losersList.Count < 2))
         {
             return;
         }
 
-        bool isTWinner = scoreT > scoreCT;
-        ulong wSteamId = isTWinner ? steamIdT : steamIdCT;
-        ulong lSteamId = isTWinner ? steamIdCT : steamIdT;
-
-        string finalWinnerName = isTWinner
-            ? (playerT is not null ? winnerName : (!string.IsNullOrEmpty(_backupNameT) ? _backupNameT : winnerName))
-            : (playerCT is not null ? winnerName : (!string.IsNullOrEmpty(_backupNameCT) ? _backupNameCT : winnerName));
-
-        string finalLoserName = isTWinner
-            ? (playerCT is not null ? loserName : (!string.IsNullOrEmpty(_backupNameCT) ? _backupNameCT : loserName))
-            : (playerT is not null ? loserName : (!string.IsNullOrEmpty(_backupNameT) ? _backupNameT : loserName));
-
-        int wKills = _matchKills.GetValueOrDefault(wSteamId);
-        int lKills = _matchKills.GetValueOrDefault(lSteamId);
-
-        // 【防範 3：防掛網洗分保護】若敗方整場 0 擊殺且 0 勝分，視為掛網送頭局，不予計算積分
-        if (lKills == 0 && loserScore == 0)
+        // 【防範 3：防掛網洗分保護】
+        // 1v1：敗方 0 殺且 0 分不計分
+        // 2v2：敗方全隊總擊殺 < 2 且 0 分，或敗方有人整場 0 殺 0 死掛機，不計入排位積分
+        if ((totalLoserKills == 0 && loserScore == 0) ||
+            (_liveMatchTargetPlayers == 4 && totalLoserKills < 2 && loserScore == 0))
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場為 0 擊殺，本局不計入排位積分");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無有效交火數據，本局不計入排位積分");
             return;
         }
 
         _hasSubmittedElo = true; // 鎖定本場已上傳，防止重複觸發
 
-        // 完賽時清空雙方本地快取，確保下次查詢拿最新分數
-        _rankMemoryCache.TryRemove(wSteamId, out _);
-        _rankMemoryCache.TryRemove(lSteamId, out _);
+        // 完賽時清空所有參賽者的本地快取，確保下次查詢拿最新分數
+        foreach (var w in winnersList) if (ulong.TryParse(w.SteamId, out ulong id)) _rankMemoryCache.TryRemove(id, out _);
+        foreach (var l in losersList) if (ulong.TryParse(l.SteamId, out ulong id)) _rankMemoryCache.TryRemove(id, out _);
+
+        var firstWinner = winnersList[0];
+        var firstLoser = losersList[0];
 
         var payload = new EloReportPayload
         {
             ApiKey        = Config.StatsApiKey,
             MapName       = Server.MapName ?? "Unknown",
+            Mode          = _liveMatchTargetPlayers == 4 ? "2v2" : "1v1",
             TargetScore   = Config.FinalMatchWinScore,
-            WinnerSteamId = wSteamId.ToString(),
-            WinnerName    = finalWinnerName,
             WinnerScore   = winnerScore,
-            WinnerKills   = wKills,
-            WinnerHs      = _matchHeadshots.GetValueOrDefault(wSteamId),
-            LoserSteamId  = lSteamId.ToString(),
-            LoserName     = finalLoserName,
             LoserScore    = loserScore,
-            LoserKills    = lKills,
-            LoserHs       = _matchHeadshots.GetValueOrDefault(lSteamId)
+
+            // 相容 1v1 單人欄位
+            WinnerSteamId = firstWinner.SteamId,
+            WinnerName    = firstWinner.Name,
+            WinnerKills   = firstWinner.Kills,
+            WinnerHs      = firstWinner.Hs,
+            LoserSteamId  = firstLoser.SteamId,
+            LoserName     = firstLoser.Name,
+            LoserKills    = firstLoser.Kills,
+            LoserHs       = firstLoser.Hs,
+
+            // 完整陣列 (1v1 為各 1 人，2v2 為各 2 人)
+            Winners       = winnersList,
+            Losers        = losersList
         };
 
         string apiUrl = Config.StatsApiUrl;
-        _ = Task.Run(() => SendEloReportAsync(apiUrl, payload, wSteamId, lSteamId));
+        _ = Task.Run(() => SendEloReportAsync(apiUrl, payload));
     }
 
     // 統一印出雙排段位資訊 (100% 保留你設定的顏色與排版)
@@ -398,8 +476,8 @@ public partial class LiteMatchManager
     {
         if (!result.Found)
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}1000");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合單挑定級賽");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}900");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
         }
         else
         {
@@ -445,8 +523,8 @@ public partial class LiteMatchManager
         _ = Task.Run(() => QueryPlayerRankAsync(sId, pName, apiUrl, now));
     }
 
-    // 【背景異步上傳】：0-GC PostAsJsonAsync，收到 iFastNet 回傳後於 NextFrame 印出段位並即時更新雙方記分板 ClanTag
-    private async Task SendEloReportAsync(string apiUrl, EloReportPayload payload, ulong wSteamId, ulong lSteamId)
+    // 【背景異步上傳】：收到 iFastNet 回傳後於 NextFrame 印出 1v1 或 2v2 結算戰報並即時更新全場 ClanTag
+    private async Task SendEloReportAsync(string apiUrl, EloReportPayload payload)
     {
         try
         {
@@ -456,20 +534,54 @@ public partial class LiteMatchManager
             var result = await response.Content.ReadFromJsonAsync<EloReportResponse>(SharedJsonOptions);
             if (result is not { Success: true }) return;
 
-            // 完賽後雙方皆已完成定級，依照最新 Elo 分數直接套用 LiteMatchManager.json 自訂的 ClanTag 名稱
-            _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
-            _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
-
-            Server.NextFrame(() =>
+            // 若回傳包含多人清單 (2v2 或新版 API 回傳)，優先使用清單更新與廣播
+            if (result.Winners is { Count: > 0 } && result.Losers is { Count: > 0 })
             {
-                if (_isServerShuttingDown) return;
-                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} (+{result.WinnerDelta} ▲) {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
-                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} (-{result.LoserDelta} ▼) {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+                foreach (var w in result.Winners)
+                {
+                    if (ulong.TryParse(w.SteamId, out ulong sid))
+                        _playerRankClanTag[sid] = GetConfiguredClanTagByElo(w.NewElo);
+                }
+                foreach (var l in result.Losers)
+                {
+                    if (ulong.TryParse(l.SteamId, out ulong sid))
+                        _playerRankClanTag[sid] = GetConfiguredClanTagByElo(l.NewElo);
+                }
 
-                // 同步刷新場上雙方的記分板標籤
-                ApplyPlayerRankClanTagBySteamId(wSteamId);
-                ApplyPlayerRankClanTagBySteamId(lSteamId);
-            });
+                Server.NextFrame(() =>
+                {
+                    if (_isServerShuttingDown) return;
+
+                    foreach (var w in result.Winners)
+                    {
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} (+{w.Delta} ▲) {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
+                        if (ulong.TryParse(w.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                    }
+                    foreach (var l in result.Losers)
+                    {
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} (-{l.Delta} ▼) {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
+                        if (ulong.TryParse(l.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                    }
+                });
+            }
+            else
+            {
+                // 向下相容舊版 1v1 單人回傳格式
+                if (ulong.TryParse(payload.WinnerSteamId, out ulong wSteamId))
+                    _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
+                if (ulong.TryParse(payload.LoserSteamId, out ulong lSteamId))
+                    _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
+
+                Server.NextFrame(() =>
+                {
+                    if (_isServerShuttingDown) return;
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} (+{result.WinnerDelta} ▲) {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} (-{result.LoserDelta} ▼) {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+
+                    if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
+                    if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
+                });
+            }
         }
         catch (Exception ex)
         {
