@@ -134,7 +134,7 @@ public class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "9.41_EloClanTag_ZeroDoubleDraw";
+    public override string ModuleVersion => "9.42_EloClanTag_ZeroDoubleDraw";
     public override string ModuleAuthor => "Optimized";
     public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag+2v2語音分流+屍體清除)";
 
