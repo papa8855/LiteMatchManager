@@ -96,6 +96,21 @@ public class EloQueryResponse
     [JsonPropertyName("hs_rate")] public double HsRate { get; set; }
 }
 
+// 【新增】：!top / !排行 查詢前三名專用回傳結構
+public class EloTopPlayerItem
+{
+    [JsonPropertyName("rank_pos")] public int RankPos { get; set; }
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("elo")] public int Elo { get; set; }
+    [JsonPropertyName("rank_title")] public string RankTitle { get; set; } = "";
+}
+
+public class EloTopResponse
+{
+    [JsonPropertyName("success")] public bool Success { get; set; }
+    [JsonPropertyName("top_players")] public List<EloTopPlayerItem>? TopPlayers { get; set; }
+}
+
 // 使用 partial class 將段位積分與記分板 ClanTag 系統完全獨立出主程式檔案
 public partial class LiteMatchManager
 {
@@ -152,6 +167,11 @@ public partial class LiteMatchManager
 
     // 【極速快取】：將查過的段位暫存於本地記憶體，達成 0 毫秒瞬間顯示
     private readonly ConcurrentDictionary<ulong, (EloQueryResponse Data, float ExpireTime)> _rankMemoryCache = new();
+
+    // 【新增：!top / !排行 查詢冷卻與本地快取】
+    private readonly Dictionary<ulong, float> _topQueryCooldown = new(64);
+    private List<EloTopPlayerItem>? _topMemoryCache = null;
+    private float _topCacheExpireTime = 0f;
 
     // =========================================================================
     // 初始化與卸載 SetClan 記憶體攔截器 (由主程式 Load / Unload 呼叫)
@@ -300,6 +320,9 @@ public partial class LiteMatchManager
         {
             _rankQueryCooldown.Clear();
             _rankMemoryCache.Clear();
+            _topQueryCooldown.Clear();
+            _topMemoryCache = null;
+            _topCacheExpireTime = 0f;
         }
     }
 
@@ -420,6 +443,8 @@ public partial class LiteMatchManager
 
         foreach (var w in winnersList) if (ulong.TryParse(w.SteamId, out ulong id)) _rankMemoryCache.TryRemove(id, out _);
         foreach (var l in losersList) if (ulong.TryParse(l.SteamId, out ulong id)) _rankMemoryCache.TryRemove(id, out _);
+        _topMemoryCache = null;
+        _topCacheExpireTime = 0f;
 
         var firstWinner = winnersList[0];
         var firstLoser = losersList[0];
@@ -499,6 +524,88 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
 
         string apiUrl = Config.StatsApiUrl;
         _ = Task.Run(() => QueryPlayerRankAsync(sId, pName, apiUrl, now));
+    }
+
+    // 【新增】：統一印出前三名排行資訊 (分三排顯示)
+    private void PrintTopPlayersToPrivateChat(CCSPlayerController player, List<EloTopPlayerItem>? topPlayers)
+    {
+        if (topPlayers == null || topPlayers.Count == 0)
+        {
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Grey}目前尚無排位完賽紀錄");
+            return;
+        }
+
+        foreach (var item in topPlayers)
+        {
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White} | 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{item.RankTitle}");
+        }
+    }
+
+    // 【新增】：觸發 !top / !排行 查詢
+    private void TriggerTopRankQuery(CCSPlayerController player)
+    {
+        if (string.IsNullOrWhiteSpace(Config.StatsApiUrl) || player.SteamID == 0) return;
+
+        ulong sId = player.SteamID;
+        float now = Server.CurrentTime;
+
+        if (_topQueryCooldown.TryGetValue(sId, out float nextAllowedTime))
+        {
+            float diff = nextAllowedTime - now;
+            if (diff > 0f && diff <= RankQueryCooldownSeconds)
+            {
+                int remainingSeconds = (int)Math.Ceiling(diff);
+                player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}查詢冷卻中，請於 {ChatColors.Lime}{remainingSeconds} 秒{ChatColors.Orange} 後再試");
+                return;
+            }
+        }
+
+        _topQueryCooldown[sId] = now + RankQueryCooldownSeconds;
+
+        if (_topMemoryCache != null && now < _topCacheExpireTime && (_topCacheExpireTime - now) <= 125.0f)
+        {
+            PrintTopPlayersToPrivateChat(player, _topMemoryCache);
+            return;
+        }
+
+        string apiUrl = Config.StatsApiUrl;
+        _ = Task.Run(() => QueryTopRankAsync(sId, apiUrl, now));
+    }
+
+    private async Task QueryTopRankAsync(ulong steamId, string apiUrl, float queryTime)
+    {
+        try
+        {
+            string url = $"{apiUrl}?action=top";
+            var result = await SharedHttpClient.GetFromJsonAsync<EloTopResponse>(url, SharedJsonOptions);
+            if (result is not { Success: true })
+            {
+                Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                return;
+            }
+
+            _topMemoryCache = result.TopPlayers ?? [];
+            _topCacheExpireTime = queryTime + 60.0f;
+
+            Server.NextFrame(() =>
+            {
+                if (_isServerShuttingDown) return;
+
+                foreach (var p in _serverPlayersCache)
+                {
+                    if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
+                    {
+                        PrintTopPlayersToPrivateChat(p, _topMemoryCache);
+                        break;
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LiteMatchManager] Top Query Error: {ex.Message}");
+            Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+        }
     }
 
     private async Task SendEloReportAsync(string apiUrl, EloReportPayload payload)
