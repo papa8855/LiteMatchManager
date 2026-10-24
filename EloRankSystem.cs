@@ -435,7 +435,7 @@ public partial class LiteMatchManager
         if ((totalLoserKills == 0 && loserScore == 0) ||
             (_liveMatchTargetPlayers == 4 && totalLoserKills < 2 && loserScore == 0))
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效交火數據，本局不計入排位積分");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效數據，本局不計入排位積分");
             return;
         }
 
@@ -490,7 +490,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
         
         // 同步顯示在畫面中間 HUD (帶有排名與積分)
-        player.PrintToCenter($"段位：{result.RankTitle} | 積分：{result.Elo}分");
+        player.PrintToCenter($"段 位：{result.RankTitle} | 積 分：{result.Elo} 分");
     }
 }
 
