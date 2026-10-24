@@ -638,12 +638,12 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
 
                     foreach (var w in result.Winners)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} (+{w.Delta} ▲) {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} + {w.Delta} ▲ {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
                         if (ulong.TryParse(w.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
                     }
                     foreach (var l in result.Losers)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} (-{l.Delta} ▼) {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo}  - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
                         if (ulong.TryParse(l.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
                     }
                 });
