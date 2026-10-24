@@ -432,12 +432,12 @@ public partial class LiteMatchManager
             return;
         }
 
-        if ((totalLoserKills == 0 && loserScore == 0) ||
-            (_liveMatchTargetPlayers == 4 && totalLoserKills < 2 && loserScore == 0))
-        {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效數據，本局不計入排位積分");
-            return;
-        }
+        if ((totalLoserKills < 3 && loserScore == 0) ||
+    (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore == 0))
+{
+    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效數據，本局不計入排位積分");
+    return;
+}
 
         _hasSubmittedElo = true;
 
