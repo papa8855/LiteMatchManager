@@ -435,7 +435,7 @@ public partial class LiteMatchManager
         if ((totalLoserKills < 3 && loserScore == 0) ||
     (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore == 0))
 {
-    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵測到敗方本場無效數據，本局不計入排位積分");
+    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵 測 到 本 場 無 效 數 據，本 場 不 計 入 排 位 積 分");
     return;
 }
 
@@ -490,7 +490,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
         
         // 同步顯示在畫面中間 HUD (帶有排名與積分)
-        player.PrintToCenter($"段 位：{result.RankTitle} | 積 分：{result.Elo} 分");
+        player.PrintToCenter($"你 的 段 位：{result.RankTitle} | 積 分：{result.Elo} 分");
     }
 }
 
@@ -538,7 +538,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         foreach (var item in topPlayers)
         {
             // 在這裡加入了 {ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White} | 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{item.RankTitle} {ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White}| 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White}| 段位：{ChatColors.Gold}{item.RankTitle}{ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}");
         }
     }
 
@@ -643,7 +643,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
                     }
                     foreach (var l in result.Losers)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo}  - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
                         if (ulong.TryParse(l.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
                     }
                 });
@@ -658,8 +658,8 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
                 Server.NextFrame(() =>
                 {
                     if (_isServerShuttingDown) return;
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} (+{result.WinnerDelta} ▲) {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} (-{result.LoserDelta} ▼) {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
 
                     if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
                     if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
