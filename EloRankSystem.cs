@@ -128,7 +128,7 @@ public partial class LiteMatchManager
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
-            MaxConnectionsPerServer = 8,
+            MaxConnectionsPerServer = 6,
             ConnectTimeout = TimeSpan.FromSeconds(5)
         };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
