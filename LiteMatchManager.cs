@@ -1368,10 +1368,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
         }
         
-        Server.NextFrame(() => {
-            // 【新增功能 23】：暖身期間無限復活時，順手清除場上殘留的舊屍體
-            if (!_isMatchLive) PurgeRagdolls();
-
+       Server.NextFrame(() => {
             if (player is not { IsValid: true, PawnIsAlive: true } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
             
             // 【嚴格保護】防止對已經被踢去觀戰的「幽靈玩家」進行武器剝奪
