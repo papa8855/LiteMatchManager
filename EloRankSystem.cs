@@ -700,7 +700,7 @@ public partial class LiteMatchManager
                     {
                         if (_isServerShuttingDown) return;
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.Gold}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
 
                         if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
                         if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
