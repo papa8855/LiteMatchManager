@@ -120,19 +120,19 @@ public partial class LiteMatchManager
         PropertyNameCaseInsensitive = true
     };
 
-    // 共用靜態 HttpClient (保持長連線 PooledConnection，消除第二次以後的 SSL 交握延遲)
+    // 【核心修復】：修正 SocketsHttpHandler 連線池參數，防止遠端主機 (Apache/Nginx/iFastNet) 提早掐斷 Keep-Alive 導致 POST 撞上死連線報錯
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private static HttpClient CreateHttpClient()
     {
         var handler = new SocketsHttpHandler
         {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
-            MaxConnectionsPerServer = 4
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
+            MaxConnectionsPerServer = 8,
+            ConnectTimeout = TimeSpan.FromSeconds(5)
         };
-        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36");
-        client.DefaultRequestHeaders.ConnectionClose = false; // 強制 Keep-Alive 加速跨國連線
         return client;
     }
 
@@ -161,7 +161,7 @@ public partial class LiteMatchManager
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
 
-    // 【!rank 查詢冷卻紀錄】：每位玩家每 6 分鐘 / 60 秒只能查詢一次
+    // 【!rank 查詢冷卻紀錄】：每位玩家每 60 秒只能查詢一次
     private const float RankQueryCooldownSeconds = 60.0f;
     private readonly Dictionary<ulong, float> _rankQueryCooldown = new(64);
 
@@ -316,6 +316,21 @@ public partial class LiteMatchManager
         _matchParticipants.Clear();
         _hasSubmittedElo = false;
 
+        // 【新增防護】：若此時正要進入正賽 (_isMatchLive == true)，預先將場上所有已準備參賽者寫入名冊備份
+        if (_isMatchLive)
+        {
+            foreach (var p in _serverPlayersCache)
+            {
+                if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, SteamID: > 0, TeamNum: 2 or 3 })
+                {
+                    if (_readyPlayers.Contains(p.SteamID))
+                    {
+                        _matchParticipants[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+                    }
+                }
+            }
+        }
+
         if (!_isMatchLive && Server.CurrentTime < 30.0f)
         {
             _rankQueryCooldown.Clear();
@@ -433,11 +448,11 @@ public partial class LiteMatchManager
         }
 
         if ((totalLoserKills < 3 && loserScore == 0) ||
-    (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore == 0))
-{
-    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵 測 到 本 場 無 效 數 據，本 場 不 計 入 排 位 積 分");
-    return;
-}
+            (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore == 0))
+        {
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵 測 到 本 場 無 效 數 據，本 場 不 計 入 排 位 積 分");
+            return;
+        }
 
         _hasSubmittedElo = true;
 
@@ -474,25 +489,25 @@ public partial class LiteMatchManager
     }
 
     // 統一印出雙排段位資訊 (私密聊天 + 畫面正中間 HUD 顯示)
-private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string playerName, EloQueryResponse result)
-{
-    if (!result.Found)
+    private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string playerName, EloQueryResponse result)
     {
-        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}900");
-        player.PrintToChat($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
-        
-        // 同步顯示在畫面中間 HUD
-        player.PrintToCenter($"段位：尚未定級 (30回合定級賽中)");
+        if (!result.Found)
+        {
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 目前段位：{ChatColors.LightBlue}{result.RankTitle} {ChatColors.White} | 初始積分：{ChatColors.Lime}900");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.White}戰績狀態：{ChatColors.Grey}尚未完成 30 回合排位定級賽");
+            
+            // 同步顯示在畫面中間 HUD
+            player.PrintToCenter($"段位：尚未定級 (30回合定級賽中)");
+        }
+        else
+        {
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 排名：{ChatColors.Lime}第 {result.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{result.RankTitle}");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
+            
+            // 同步顯示在畫面中間 HUD (帶有排名與積分)
+            player.PrintToCenter($"你 的 段 位：{result.RankTitle} | 積 分：{result.Elo} 分");
+        }
     }
-    else
-    {
-        player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{playerName} {ChatColors.White} | 排名：{ChatColors.Lime}第 {result.RankPos} 名 {ChatColors.White} | 段位：{ChatColors.Gold}{result.RankTitle}");
-        player.PrintToChat($" {_cachedPrefix} {ChatColors.White}積分：{ChatColors.Green}{result.Elo} {ChatColors.White} | 戰績：{ChatColors.Lime}{result.Wins} 勝 {ChatColors.DarkRed} {result.Losses} 敗 {ChatColors.Orange}{result.WinRate} % {ChatColors.White} | 爆頭：{ChatColors.Orange}{result.HsRate} %");
-        
-        // 同步顯示在畫面中間 HUD (帶有排名與積分)
-        player.PrintToCenter($"你 的 段 位：{result.RankTitle} | 積 分：{result.Elo} 分");
-    }
-}
 
     private void TriggerPlayerRankQuery(CCSPlayerController player)
     {
@@ -526,7 +541,7 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
         _ = Task.Run(() => QueryPlayerRankAsync(sId, pName, apiUrl, now));
     }
 
-   // 【修改】：統一印出前三名排行資訊 (加入積分顯示)
+    // 【修改】：統一印出前三名排行資訊 (加入積分顯示)
     private void PrintTopPlayersToPrivateChat(CCSPlayerController player, List<EloTopPlayerItem>? topPlayers)
     {
         if (topPlayers == null || topPlayers.Count == 0)
@@ -537,7 +552,6 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
 
         foreach (var item in topPlayers)
         {
-            // 在這裡加入了 {ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}
             player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{item.Name} {ChatColors.White}| 排名：{ChatColors.Lime}第 {item.RankPos} 名 {ChatColors.White}| 段位：{ChatColors.Gold}{item.RankTitle}{ChatColors.White} | 積分：{ChatColors.Green}{item.Elo}");
         }
     }
@@ -575,142 +589,190 @@ private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string pla
 
     private async Task QueryTopRankAsync(ulong steamId, string apiUrl, float queryTime)
     {
-        try
+        const int maxRetries = 2;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            string url = $"{apiUrl}?action=top";
-            var result = await SharedHttpClient.GetFromJsonAsync<EloTopResponse>(url, SharedJsonOptions);
-            if (result is not { Success: true })
+            try
             {
-                Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                string url = $"{apiUrl}?action=top";
+                var result = await SharedHttpClient.GetFromJsonAsync<EloTopResponse>(url, SharedJsonOptions);
+                if (result is not { Success: true })
+                {
+                    if (attempt < maxRetries) { await Task.Delay(500); continue; }
+                    Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                    return;
+                }
+
+                _topMemoryCache = result.TopPlayers ?? [];
+                _topCacheExpireTime = queryTime + 60.0f;
+
+                Server.NextFrame(() =>
+                {
+                    if (_isServerShuttingDown) return;
+
+                    foreach (var p in _serverPlayersCache)
+                    {
+                        if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
+                        {
+                            PrintTopPlayersToPrivateChat(p, _topMemoryCache);
+                            break;
+                        }
+                    }
+                });
                 return;
             }
-
-            _topMemoryCache = result.TopPlayers ?? [];
-            _topCacheExpireTime = queryTime + 60.0f;
-
-            Server.NextFrame(() =>
+            catch (Exception ex)
             {
-                if (_isServerShuttingDown) return;
-
-                foreach (var p in _serverPlayersCache)
+                if (attempt < maxRetries)
                 {
-                    if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
-                    {
-                        PrintTopPlayersToPrivateChat(p, _topMemoryCache);
-                        break;
-                    }
+                    await Task.Delay(500);
                 }
-            });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[LiteMatchManager] Top Query Error: {ex.Message}");
-            Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                else
+                {
+                    Console.WriteLine($"[LiteMatchManager] Top Query Error: {ex.Message}");
+                    Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                }
+            }
         }
     }
 
+    // 【核心防護】：完賽積分上傳具備 3 次自動重試機制，徹底杜絕網路瞬斷或舊連線關閉導致玩家白打！
     private async Task SendEloReportAsync(string apiUrl, EloReportPayload payload)
     {
-        try
+        const int maxRetries = 3;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            using var response = await SharedHttpClient.PostAsJsonAsync(apiUrl, payload, SharedJsonOptions);
-            if (!response.IsSuccessStatusCode) return;
-
-            var result = await response.Content.ReadFromJsonAsync<EloReportResponse>(SharedJsonOptions);
-            if (result is not { Success: true }) return;
-
-            if (result.Winners is { Count: > 0 } && result.Losers is { Count: > 0 })
+            try
             {
-                foreach (var w in result.Winners)
+                using var response = await SharedHttpClient.PostAsJsonAsync(apiUrl, payload, SharedJsonOptions);
+                if (!response.IsSuccessStatusCode)
                 {
-                    if (ulong.TryParse(w.SteamId, out ulong sid))
-                        _playerRankClanTag[sid] = GetConfiguredClanTagByElo(w.NewElo);
-                }
-                foreach (var l in result.Losers)
-                {
-                    if (ulong.TryParse(l.SteamId, out ulong sid))
-                        _playerRankClanTag[sid] = GetConfiguredClanTagByElo(l.NewElo);
+                    Console.WriteLine($"[LiteMatchManager] Elo API HTTP Status Error ({(int)response.StatusCode}), Attempt {attempt}/{maxRetries}");
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(1000);
+                        continue;
+                    }
+                    return;
                 }
 
-                Server.NextFrame(() =>
-                {
-                    if (_isServerShuttingDown) return;
+                var result = await response.Content.ReadFromJsonAsync<EloReportResponse>(SharedJsonOptions);
+                if (result is not { Success: true }) return;
 
+                if (result.Winners is { Count: > 0 } && result.Losers is { Count: > 0 })
+                {
                     foreach (var w in result.Winners)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} + {w.Delta} ▲ {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
-                        if (ulong.TryParse(w.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                        if (ulong.TryParse(w.SteamId, out ulong sid))
+                            _playerRankClanTag[sid] = GetConfiguredClanTagByElo(w.NewElo);
                     }
                     foreach (var l in result.Losers)
                     {
-                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
-                        if (ulong.TryParse(l.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                        if (ulong.TryParse(l.SteamId, out ulong sid))
+                            _playerRankClanTag[sid] = GetConfiguredClanTagByElo(l.NewElo);
                     }
-                });
-            }
-            else
-            {
-                if (ulong.TryParse(payload.WinnerSteamId, out ulong wSteamId))
-                    _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
-                if (ulong.TryParse(payload.LoserSteamId, out ulong lSteamId))
-                    _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
 
-                Server.NextFrame(() =>
+                    Server.NextFrame(() =>
+                    {
+                        if (_isServerShuttingDown) return;
+
+                        foreach (var w in result.Winners)
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} + {w.Delta} ▲ {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
+                            if (ulong.TryParse(w.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                        }
+                        foreach (var l in result.Losers)
+                        {
+                            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
+                            if (ulong.TryParse(l.SteamId, out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                        }
+                    });
+                }
+                else
                 {
-                    if (_isServerShuttingDown) return;
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+                    if (ulong.TryParse(payload.WinnerSteamId, out ulong wSteamId))
+                        _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
+                    if (ulong.TryParse(payload.LoserSteamId, out ulong lSteamId))
+                        _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
 
-                    if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
-                    if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
-                });
+                    Server.NextFrame(() =>
+                    {
+                        if (_isServerShuttingDown) return;
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
+                        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
+
+                        if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
+                        if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
+                    });
+                }
+
+                // 成功結算並印出戰報後，立刻結束迴圈
+                return;
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[LiteMatchManager] Elo API Error: {ex.Message}");
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LiteMatchManager] Elo API Error (Attempt {attempt}/{maxRetries}): {ex.Message}");
+                if (attempt < maxRetries)
+                {
+                    await Task.Delay(1000); // 等待 1 秒後換一條全新連線自動重發
+                }
+            }
         }
     }
 
     private async Task QueryPlayerRankAsync(ulong steamId, string playerName, string apiUrl, float queryTime)
     {
-        try
+        const int maxRetries = 2;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            string url = $"{apiUrl}?action=query&steamid={steamId}";
-            var result = await SharedHttpClient.GetFromJsonAsync<EloQueryResponse>(url, SharedJsonOptions);
-            if (result is not { Success: true })
+            try
             {
-                Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
+                string url = $"{apiUrl}?action=query&steamid={steamId}";
+                var result = await SharedHttpClient.GetFromJsonAsync<EloQueryResponse>(url, SharedJsonOptions);
+                if (result is not { Success: true })
+                {
+                    if (attempt < maxRetries) { await Task.Delay(500); continue; }
+                    Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
+                    return;
+                }
+
+                _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
+
+                _playerRankClanTag[steamId] = result.Found
+                    ? GetConfiguredClanTagByElo(result.Elo)
+                    : "";
+
+                Server.NextFrame(() =>
+                {
+                    if (_isServerShuttingDown) return;
+                    
+                    // 從伺服器在線玩家快取中找到該玩家的 Controller 物件來發送私密訊息
+                    foreach (var p in _serverPlayersCache)
+                    {
+                        if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
+                        {
+                            PrintPlayerRankToPrivateChat(p, playerName, result);
+                            break;
+                        }
+                    }
+                    
+                    ApplyPlayerRankClanTagBySteamId(steamId);
+                });
                 return;
             }
-
-            _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
-
-            _playerRankClanTag[steamId] = result.Found
-                ? GetConfiguredClanTagByElo(result.Elo)
-                : "";
-
-            Server.NextFrame(() =>
+            catch (Exception ex)
             {
-                if (_isServerShuttingDown) return;
-                
-                // 從伺服器在線玩家快取中找到該玩家的 Controller 物件來發送私密訊息
-                foreach (var p in _serverPlayersCache)
+                if (attempt < maxRetries)
                 {
-                    if (p is { IsValid: true, Handle: not 0, SteamID: var sid } && sid == steamId)
-                    {
-                        PrintPlayerRankToPrivateChat(p, playerName, result);
-                        break;
-                    }
+                    await Task.Delay(500);
                 }
-                
-                ApplyPlayerRankClanTagBySteamId(steamId);
-            });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[LiteMatchManager] Rank Query Error: {ex.Message}");
-            Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
+                else
+                {
+                    Console.WriteLine($"[LiteMatchManager] Rank Query Error: {ex.Message}");
+                    Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
+                }
+            }
         }
     }
 }
