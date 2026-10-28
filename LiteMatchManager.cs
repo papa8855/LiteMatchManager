@@ -440,7 +440,7 @@ public partial class LiteMatchManager
 
             // 【核心修復 2】：如果不是開賽先發，而是中途進來補位的玩家 (如 C 玩家)，
             // 他的總交戰數 (Kills + Deaths) 必須 >= 4 (代表至少實質打了 4 回合以上)，否則視為尾盤湊數補位，不加減分！
-            if (!isStarter && engagements < 4)
+            if (!isStarter && engagements < 10)
             {
                 continue;
             }
