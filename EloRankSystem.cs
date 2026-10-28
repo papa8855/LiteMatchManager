@@ -24,6 +24,7 @@ public class EloPlayerMatchStat
     [JsonPropertyName("kills")] public int Kills { get; set; }
     [JsonPropertyName("deaths")] public int Deaths { get; set; }
     [JsonPropertyName("hs")] public int Hs { get; set; }
+    [JsonPropertyName("online")] public bool Online { get; set; } = true;
 }
 
 public class EloPlayerResult
@@ -155,8 +156,11 @@ public partial class LiteMatchManager
     private readonly Dictionary<ulong, int> _matchDeaths = new(8);
     private readonly Dictionary<ulong, int> _matchHeadshots = new(8);
 
-    // 【優化 5：支援 1v1 與 2v2 防第 30 分敗方秒退吞分備份】記錄本場參賽者的隊伍與名稱
+    // 【優化 5：支援 1v1 與 2v2 防敗方秒退吞分備份】記錄本場參賽者的隊伍與名稱
     private readonly Dictionary<ulong, (int Team, string Name)> _matchParticipants = new(8);
+
+    // 【新增防弊】：記錄「開賽時正式按準備(Ready)的先發玩家」，用來區分先發與中途補位路人
+    private readonly HashSet<ulong> _initialStarters = new(8);
 
     // 【防範 1】：單場結算防重複上傳鎖
     private bool _hasSubmittedElo = false;
@@ -314,9 +318,10 @@ public partial class LiteMatchManager
         _matchDeaths.Clear();
         _matchHeadshots.Clear();
         _matchParticipants.Clear();
+        _initialStarters.Clear();
         _hasSubmittedElo = false;
 
-        // 【新增防護】：若此時正要進入正賽 (_isMatchLive == true)，預先將場上所有已準備參賽者寫入名冊備份
+        // 若此時正要進入正賽 (_isMatchLive == true)，預先將場上所有已準備參賽者寫入名冊備份並標記為先發
         if (_isMatchLive)
         {
             foreach (var p in _serverPlayersCache)
@@ -326,6 +331,7 @@ public partial class LiteMatchManager
                     if (_readyPlayers.Contains(p.SteamID))
                     {
                         _matchParticipants[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+                        _initialStarters.Add(p.SteamID);
                     }
                 }
             }
@@ -393,23 +399,31 @@ public partial class LiteMatchManager
             return;
         }
 
+        // 建立結算當下「仍在線上且在 T/CT 隊伍中」的玩家字典
+        var onlineTeamMap = new Dictionary<ulong, (int Team, string Name)>(8);
         foreach (var p in _serverPlayersCache)
         {
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, SteamID: > 0, TeamNum: 2 or 3 })
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0, TeamNum: 2 or 3 })
             {
-                _matchParticipants[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+                onlineTeamMap[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+
+                // 【核心修復 1】：不要隨便把剛進場 0 殺 0 死的路人加進 _matchParticipants！
+                // 只有當他是「開賽先發玩家」或者「已經在場上參與至少 3 次交戰 (Kills+Deaths >= 3)」的實質補位玩家，才更新進參賽名冊
+                int engagements = _matchKills.GetValueOrDefault(p.SteamID) + _matchDeaths.GetValueOrDefault(p.SteamID);
+                if (_initialStarters.Contains(p.SteamID) || engagements >= 3)
+                {
+                    _matchParticipants[p.SteamID] = (p.TeamNum, p.PlayerName ?? "Player");
+                }
             }
         }
 
         bool isTWinner = scoreT > scoreCT;
         int winTeam = isTWinner ? 2 : 3;
         int loseTeam = isTWinner ? 3 : 2;
+        int maxPerTeam = _liveMatchTargetPlayers == 4 ? 2 : 1;
 
-        var winnersList = new List<EloPlayerMatchStat>(2);
-        var losersList = new List<EloPlayerMatchStat>(2);
-
-        int totalWinnerKills = 0;
-        int totalLoserKills = 0;
+        var winnersList = new List<EloPlayerMatchStat>(4);
+        var losersList = new List<EloPlayerMatchStat>(4);
 
         foreach (var (sid, info) in _matchParticipants)
         {
@@ -418,37 +432,92 @@ public partial class LiteMatchManager
             int k = _matchKills.GetValueOrDefault(sid);
             int d = _matchDeaths.GetValueOrDefault(sid);
             int hs = _matchHeadshots.GetValueOrDefault(sid);
+            int engagements = k + d;
 
-            var stat = new EloPlayerMatchStat
+            // 檢查該玩家在結算當下是否仍在該隊伍線上
+            bool isCurrentlyOnline = onlineTeamMap.TryGetValue(sid, out var curInfo) && curInfo.Team == info.Team;
+            bool isStarter = _initialStarters.Contains(sid);
+
+            // 【核心修復 2】：如果不是開賽先發，而是中途進來補位的玩家 (如 C 玩家)，
+            // 他的總交戰數 (Kills + Deaths) 必須 >= 4 (代表至少實質打了 4 回合以上)，否則視為尾盤湊數補位，不加減分！
+            if (!isStarter && engagements < 10)
             {
-                SteamId = sid.ToString(),
-                Name = info.Name,
-                Kills = k,
-                Deaths = d,
-                Hs = hs
-            };
+                continue;
+            }
 
             if (info.Team == winTeam)
             {
-                winnersList.Add(stat);
-                totalWinnerKills += k;
+                // 【核心修復 3】：獲勝方的玩家 (如 A 玩家) 如果中途離線跳車 (結算時不在線上)，直接取消他的加分資格！
+                if (!isCurrentlyOnline)
+                {
+                    continue;
+                }
+
+                winnersList.Add(new EloPlayerMatchStat
+                {
+                    SteamId = sid.ToString(),
+                    Name = info.Name,
+                    Kills = k,
+                    Deaths = d,
+                    Hs = hs,
+                    Online = true
+                });
             }
             else
             {
-                losersList.Add(stat);
-                totalLoserKills += k;
+                // 落敗方：無論還在線上，或是先發玩家打到一半見苗頭不對秒退跳車 (isStarter)，通通保留在敗方名單扣分！
+                losersList.Add(new EloPlayerMatchStat
+                {
+                    SteamId = sid.ToString(),
+                    Name = info.Name,
+                    Kills = k,
+                    Deaths = d,
+                    Hs = hs,
+                    Online = isCurrentlyOnline
+                });
             }
+        }
+
+        // 【核心修復 4 (0-GC 原生排序與裁剪)】：若名單超過隊伍上限，使用 List.Sort 原地排序並裁剪，0 記憶體垃圾！
+        if (winnersList.Count > maxPerTeam)
+        {
+            winnersList.Sort(static (a, b) =>
+            {
+                int cmp = b.Online.CompareTo(a.Online);
+                if (cmp != 0) return cmp;
+                cmp = (b.Kills + b.Deaths).CompareTo(a.Kills + a.Deaths);
+                return cmp != 0 ? cmp : b.Kills.CompareTo(a.Kills);
+            });
+            winnersList.RemoveRange(maxPerTeam, winnersList.Count - maxPerTeam);
+        }
+
+        if (losersList.Count > maxPerTeam)
+        {
+            losersList.Sort(static (a, b) =>
+            {
+                int cmp = (b.Kills + b.Deaths).CompareTo(a.Kills + a.Deaths);
+                return cmp != 0 ? cmp : b.Deaths.CompareTo(a.Deaths);
+            });
+            losersList.RemoveRange(maxPerTeam, losersList.Count - maxPerTeam);
         }
 
         if (winnersList.Count == 0 || losersList.Count == 0) return;
 
-        if (_liveMatchTargetPlayers == 4 && (winnersList.Count < 2 || losersList.Count < 2))
+        // 注意：若 2v2 勝方有 1 人中離且補位者未滿 4 回合，允許剩下一名孤軍奮戰獲勝的隊友 (winnersList.Count >= 1) 照常領取勝利積分！
+        if (_liveMatchTargetPlayers == 4 && (winnersList.Count < 1 || losersList.Count < 1))
         {
             return;
         }
 
-        if ((totalLoserKills < 3 && loserScore == 0) ||
-            (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore == 0))
+        // 【0-GC 原生迴圈加總】：取代 LINQ 的 .Sum()
+        int totalWinnerKills = 0;
+        for (int i = 0; i < winnersList.Count; i++) totalWinnerKills += winnersList[i].Kills;
+
+        int totalLoserKills = 0;
+        for (int i = 0; i < losersList.Count; i++) totalLoserKills += losersList[i].Kills;
+
+        if ((totalLoserKills < 3 && loserScore <= 1) ||
+            (_liveMatchTargetPlayers == 4 && totalLoserKills < 5 && loserScore <= 1))
         {
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}偵 測 到 本 場 無 效 數 據，本 場 不 計 入 排 位 積 分");
             return;
