@@ -17,20 +17,28 @@ namespace LiteMatchManager;
 // =========================================
 // 【核心要求 3】：0-GC 類型安全 ConVar<T> 泛型封裝結構
 // =========================================
-public readonly struct ConVar<T>(CounterStrikeSharp.API.Modules.Cvars.ConVar? inner) where T : unmanaged
+public readonly struct ConVar<T> where T : unmanaged
 {
-    public bool IsValid => inner is not null;
+    private readonly CounterStrikeSharp.API.Modules.Cvars.ConVar? _inner;
+
+    public ConVar(CounterStrikeSharp.API.Modules.Cvars.ConVar? inner)
+    {
+        _inner = inner;
+    }
+
+    public bool IsValid => _inner is not null;
 
     public T Value
     {
-        get => inner is not null ? inner.GetPrimitiveValue<T>() : default;
-        set => inner?.SetValue(value);
+        get => _inner is not null ? _inner.GetPrimitiveValue<T>() : default;
+        set => _inner?.SetValue(value);
     }
 
-    public static ConVar<T> Find(string name) => new(CounterStrikeSharp.API.Modules.Cvars.ConVar.Find(name));
-    public void SetValue(T value) => inner?.SetValue(value);
-}
+    public static ConVar<T> Find(string name) => 
+        new(CounterStrikeSharp.API.Modules.Cvars.ConVar.Find(name));
 
+    public void SetValue(T value) => _inner?.SetValue(value);
+}
 // =========================================
 // 階段對戰 (Phase) 專用設定類別
 // =========================================
