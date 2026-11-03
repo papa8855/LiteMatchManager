@@ -4,6 +4,7 @@ using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Admin;
+using CounterStrikeSharp.API.Modules.Cvars;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using System;
@@ -13,23 +14,6 @@ using System.Runtime.InteropServices;
 namespace LiteMatchManager;
 
 #pragma warning disable CS8618
-
-// =========================================
-// 【核心要求 3】：0-GC 類型安全 ConVar<T> 泛型封裝結構
-// =========================================
-public readonly struct ConVar<T>(CounterStrikeSharp.API.Modules.Cvars.ConVar? inner) where T : unmanaged
-{
-    public bool IsValid => inner is not null;
-
-    public T Value
-    {
-        get => inner is not null ? inner.GetPrimitiveValue<T>() : default;
-        set => inner?.SetValue(value);
-    }
-
-    public static ConVar<T> Find(string name) => new(CounterStrikeSharp.API.Modules.Cvars.ConVar.Find(name));
-    public void SetValue(T value) => inner?.SetValue(value);
-}
 
 // =========================================
 // 階段對戰 (Phase) 專用設定類別
@@ -146,9 +130,9 @@ public sealed class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.0_DotNet10_ZeroGC_Merged";
+    public override string ModuleVersion => "10.0.1_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + ConVar<T> + 0-GC架構)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 原生ConVar<T> + 0-GC架構)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -210,11 +194,11 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
 
-    // 【核心要求 3】：全面改用新型 ConVar<T> 進行類型安全存取
-    private ConVar<int> _cvWarmupPauseTimer;
-    private ConVar<bool> _cvAllTalk;
-    private ConVar<bool> _cvFullAllTalk;
-    private ConVar<bool> _cvDeadTalk;
+    // 【核心要求 3】：直接採用 CounterStrikeSharp v1.0.379 官方原生 ConVar<T>
+    private ConVar<int>? _cvWarmupPauseTimer = null;
+    private ConVar<bool>? _cvAllTalk = null;
+    private ConVar<bool>? _cvFullAllTalk = null;
+    private ConVar<bool>? _cvDeadTalk = null;
 
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
@@ -368,16 +352,18 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _pendingRagdolls.Clear();
     }
 
-    // 【核心要求 3】：改用 ConVar<bool> 直接設定記憶體值，不產生字串命令解析開銷
+    // 【核心要求 3】：改用官方原生 ConVar<bool> 直接設定 Value，不產生字串命令解析開銷
     private void ApplyVoiceMode(bool enableAllTalk)
     {
-        if (!_cvAllTalk.IsValid) CacheConVars();
+        _cvAllTalk     ??= ConVar<bool>.Find("sv_alltalk");
+        _cvFullAllTalk ??= ConVar<bool>.Find("sv_full_alltalk");
+        _cvDeadTalk    ??= ConVar<bool>.Find("sv_deadtalk");
 
-        if (_cvAllTalk.IsValid && _cvFullAllTalk.IsValid && _cvDeadTalk.IsValid)
+        if (_cvAllTalk is not null && _cvFullAllTalk is not null && _cvDeadTalk is not null)
         {
-            _cvAllTalk.SetValue(enableAllTalk);
-            _cvFullAllTalk.SetValue(enableAllTalk);
-            _cvDeadTalk.SetValue(true);
+            _cvAllTalk.Value     = enableAllTalk;
+            _cvFullAllTalk.Value = enableAllTalk;
+            _cvDeadTalk.Value    = true;
         }
         else
         {
@@ -953,8 +939,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             Server.ExecuteCommand("mp_warmup_start");
 
-            if (!_cvWarmupPauseTimer.IsValid) _cvWarmupPauseTimer = ConVar<int>.Find("mp_warmup_pausetimer");
-            if (_cvWarmupPauseTimer.IsValid) _cvWarmupPauseTimer.SetValue(1);
+            _cvWarmupPauseTimer ??= ConVar<int>.Find("mp_warmup_pausetimer");
+            if (_cvWarmupPauseTimer is not null) _cvWarmupPauseTimer.Value = 1;
             else Server.ExecuteCommand("mp_warmup_pausetimer 1");
 
             Server.NextFrame(() =>
