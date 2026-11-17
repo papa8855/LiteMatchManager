@@ -271,7 +271,7 @@ public partial class LiteMatchManager
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
-        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.PlayerConnected, SteamID: > 0 })
+        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
             return;
 
         string targetTag = _playerRankClanTag.TryGetValue(player.SteamID, out string? savedTag) && !string.IsNullOrEmpty(savedTag)
