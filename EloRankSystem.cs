@@ -1,7 +1,6 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
+using CounterStrikeSharp.API.Modules.UserMessages;
 using CounterStrikeSharp.API.Modules.Utils;
 using System;
 using System.Buffers;
@@ -180,11 +179,10 @@ public partial class LiteMatchManager
         }
     }
 
-    public MemoryFunctionVoid<CCSPlayerController, uint, string>? SetClanFunc;
-    private bool _isSetClanHooked = false;
-
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
+    private readonly ConcurrentDictionary<ulong, int> _playerEloScore = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
+    private float _nextRankRevealBroadcastTime = 0f;
 
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchDeaths = new(8);
@@ -217,6 +215,7 @@ public partial class LiteMatchManager
     {
         UnloadEloClanTagSystem();
         _playerRankClanTag.Clear();
+        _playerEloScore.Clear();
         _fetchingClanTags.Clear();
         _matchKills.Clear();
         _matchDeaths.Clear();
@@ -234,38 +233,12 @@ public partial class LiteMatchManager
 
     private void InitEloClanTagSystem()
     {
-        if (!Config.EloSettings.EloSystemEnabled || _isSetClanHooked) return;
-
-        try
-        {
-            SetClanFunc ??= new MemoryFunctionVoid<CCSPlayerController, uint, string>("CCSPlayerController::SetClan");
-            SetClanFunc.Hook(OnSetClanPre, HookMode.Pre);
-            _isSetClanHooked = true;
-            Console.WriteLine("[LiteMatchManager] CCSPlayerController::SetClan 攔截盾牌啟動成功 (MatchZy 同款安全模式)！");
-        }
-        catch (Exception ex)
-        {
-            _isSetClanHooked = false;
-            Console.WriteLine($"[LiteMatchManager] 提示：未掛載 CCSPlayerController::SetClan，將使用標準 m_szClan 同步 ({ex.Message})");
-        }
+        if (!Config.EloSettings.EloSystemEnabled) return;
+        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分顯示系統已啟動！");
     }
 
     private void UnloadEloClanTagSystem()
     {
-        if (_isSetClanHooked && SetClanFunc != null)
-        {
-            try
-            {
-                SetClanFunc.Unhook(OnSetClanPre, HookMode.Pre);
-            }
-            catch { }
-            _isSetClanHooked = false;
-        }
-    }
-
-    private HookResult OnSetClanPre(DynamicHook hook)
-    {
-        return Config.EloSettings.EloSystemEnabled ? HookResult.Handled : HookResult.Continue;
     }
 
     private string GetConfiguredClanTagByElo(int elo)
@@ -278,10 +251,27 @@ public partial class LiteMatchManager
         return eloCfg.ClanTag_TierD ?? "";
     }
 
+    // 發送 CS2 官方段位解鎖封包 (UserMessage ID 50: CCSUsrMsg_ServerRankRevealAll)，讓玩家按 TAB 隨時能看到優先權分數牌
+    private void BroadcastRankRevealAll(bool force = false)
+    {
+        float now = Server.CurrentTime;
+        if (!force && now < _nextRankRevealBroadcastTime && (_nextRankRevealBroadcastTime - now) <= 5.0f)
+            return;
+
+        _nextRankRevealBroadcastTime = now + 1.5f;
+
+        try
+        {
+            var msg = UserMessage.FromId(50);
+            msg.Send(new RecipientFilter(Utilities.GetPlayers()));
+        }
+        catch { }
+    }
+
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
-        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
+        if (player is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.PlayerConnected, SteamID: > 0 })
             return;
 
         string targetTag = _playerRankClanTag.TryGetValue(player.SteamID, out string? savedTag) && !string.IsNullOrEmpty(savedTag)
@@ -292,6 +282,36 @@ public partial class LiteMatchManager
         {
             player.Clan = targetTag;
             Utilities.SetStateChanged(player, "CCSPlayerController", "m_szClan");
+        }
+
+        // 同步設定 TAB 計分板上的優先權分數 (Premier Rating: Type 11)
+        int targetElo = _playerEloScore.TryGetValue(player.SteamID, out int savedElo) && savedElo > 0 ? savedElo : 0;
+        sbyte targetRankType = targetElo > 0 ? (sbyte)11 : (sbyte)0;
+        int targetWins = targetElo > 0 ? 10 : 0;
+
+        bool rankChanged = false;
+        if (player.CompetitiveRankType != targetRankType)
+        {
+            player.CompetitiveRankType = targetRankType;
+            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRankType");
+            rankChanged = true;
+        }
+        if (player.CompetitiveRanking != targetElo)
+        {
+            player.CompetitiveRanking = targetElo;
+            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRanking");
+            rankChanged = true;
+        }
+        if (player.CompetitiveWins != targetWins)
+        {
+            player.CompetitiveWins = targetWins;
+            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveWins");
+            rankChanged = true;
+        }
+
+        if (targetElo > 0)
+        {
+            BroadcastRankRevealAll(force: rankChanged);
         }
     }
 
@@ -341,6 +361,7 @@ public partial class LiteMatchManager
 
                 _rankMemoryCache[steamId] = (result, now + 120.0f);
                 _playerRankClanTag[steamId] = result.Found ? GetConfiguredClanTagByElo(result.Elo) : "";
+                _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
                 Server.NextFrame(() => ApplyPlayerRankClanTagBySteamId(steamId));
             }
@@ -356,6 +377,7 @@ public partial class LiteMatchManager
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
         _playerRankClanTag.TryRemove(steamId, out _);
+        _playerEloScore.TryRemove(steamId, out _);
         _fetchingClanTags.TryRemove(steamId, out _);
     }
 
@@ -473,7 +495,7 @@ public partial class LiteMatchManager
         for (int i = 0; i < players.Length; i++)
         {
             var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0, TeamNum: 2 or 3 })
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.PlayerConnected, SteamID: > 0, TeamNum: 2 or 3 })
             {
                 string pName = _matchParticipants.TryGetValue(p.SteamID, out var cached) && !string.IsNullOrEmpty(cached.Name)
                     ? cached.Name
@@ -813,13 +835,19 @@ public partial class LiteMatchManager
                     {
                         var w = result.Winners[i];
                         if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid))
+                        {
                             _playerRankClanTag[sid] = GetConfiguredClanTagByElo(w.NewElo);
+                            _playerEloScore[sid] = Math.Max(1, w.NewElo);
+                        }
                     }
                     for (int i = 0; i < result.Losers.Count; i++)
                     {
                         var l = result.Losers[i];
                         if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid))
+                        {
                             _playerRankClanTag[sid] = GetConfiguredClanTagByElo(l.NewElo);
+                            _playerEloScore[sid] = Math.Max(1, l.NewElo);
+                        }
                     }
 
                     Server.NextFrame(() =>
@@ -843,9 +871,15 @@ public partial class LiteMatchManager
                 else
                 {
                     if (ulong.TryParse(payload.WinnerSteamId.AsSpan(), out ulong wSteamId))
+                    {
                         _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
+                        _playerEloScore[wSteamId] = Math.Max(1, result.WinnerNewElo);
+                    }
                     if (ulong.TryParse(payload.LoserSteamId.AsSpan(), out ulong lSteamId))
+                    {
                         _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
+                        _playerEloScore[lSteamId] = Math.Max(1, result.LoserNewElo);
+                    }
 
                     Server.NextFrame(() =>
                     {
@@ -892,6 +926,7 @@ public partial class LiteMatchManager
                 _playerRankClanTag[steamId] = result.Found
                     ? GetConfiguredClanTagByElo(result.Elo)
                     : "";
+                _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
                 Server.NextFrame(() =>
                 {
