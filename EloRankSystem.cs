@@ -262,8 +262,22 @@ public partial class LiteMatchManager
 
         try
         {
-            var msg = UserMessage.FromId(50);
-            msg.Send(new RecipientFilter(Utilities.GetPlayers()));
+            var filter = new RecipientFilter();
+            ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+            for (int i = 0; i < players.Length; i++)
+            {
+                var p = players[i];
+                if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected })
+                {
+                    filter.Add(p);
+                }
+            }
+
+            if (filter.Count > 0)
+            {
+                var msg = UserMessage.FromId(50);
+                msg.Send(filter);
+            }
         }
         catch { }
     }
@@ -495,7 +509,7 @@ public partial class LiteMatchManager
         for (int i = 0; i < players.Length; i++)
         {
             var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.PlayerConnected, SteamID: > 0, TeamNum: 2 or 3 })
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0, TeamNum: 2 or 3 })
             {
                 string pName = _matchParticipants.TryGetValue(p.SteamID, out var cached) && !string.IsNullOrEmpty(cached.Name)
                     ? cached.Name
