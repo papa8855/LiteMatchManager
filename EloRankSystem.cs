@@ -179,9 +179,13 @@ public partial class LiteMatchManager
         }
     }
 
+    private const sbyte PremierRankType = 11; // CS2 Premier 優先權數字牌模式
+
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
     private readonly ConcurrentDictionary<ulong, int> _playerEloScore = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
+
+    private Listeners.OnTick? _scoreboardTickListener;
 
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchDeaths = new(8);
@@ -233,11 +237,82 @@ public partial class LiteMatchManager
     private void InitEloClanTagSystem()
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
-        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (0-GC 事件觸發模式) 已啟動！");
+
+        if (CoreConfig.FollowCS2ServerGuidelines)
+        {
+            Console.WriteLine("[LiteMatchManager] ⚠️ 警告：addons/counterstrikesharp/configs/core.json 中的 FollowCS2ServerGuidelines 為 true，這會導致 TAB 優先權積分無法顯示！請將其改為 false！");
+        }
+
+        if (_scoreboardTickListener == null)
+        {
+            _scoreboardTickListener = MaintainScoreboardRanksMemory;
+            RegisterListener(_scoreboardTickListener);
+        }
+
+        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (單次觸發・無定時器版) 已啟動！");
     }
 
     private void UnloadEloClanTagSystem()
     {
+        if (_scoreboardTickListener != null)
+        {
+            try
+            {
+                RemoveListener(_scoreboardTickListener);
+            }
+            catch { }
+            _scoreboardTickListener = null;
+        }
+    }
+
+    // 僅針對「已定級玩家 (ranking > 0)」維持記憶體數值，未定級玩家直接跳過；平常數值未變時直接 continue (0-GC、0封包)
+    private void MaintainScoreboardRanksMemory()
+    {
+        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
+            return;
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var controller = players[i];
+            if (controller is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected, SteamID: > 0 })
+                continue;
+
+            // 未定級 (0) 或尚未查詢完成的玩家直接跳過，不耗費任何資源
+            if (!_playerEloScore.TryGetValue(controller.SteamID, out int ranking) || ranking <= 0)
+                continue;
+
+            if (controller.CompetitiveWins == 10 &&
+                controller.CompetitiveRankType == PremierRankType &&
+                controller.CompetitiveRanking == ranking)
+            {
+                continue;
+            }
+
+            controller.CompetitiveWins = 10;
+            controller.CompetitiveRankType = PremierRankType;
+            controller.CompetitiveRanking = ranking;
+            Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveWins");
+            Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveRankType");
+            Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveRanking");
+        }
+    }
+
+    // 僅在玩家進服載入完成或比賽結算時「單次呼叫 1 次」，無任何背景定時器
+    private void RevealScoreboardRanksOnce()
+    {
+        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
+            return;
+
+        if (_serverPlayersCache.Count == 0) return;
+
+        try
+        {
+            using UserMessage message = UserMessage.FromPartialName("ServerRankRevealAll");
+            message.Recipients.AddAllPlayers();
+            message.Send();
+        }
+        catch { }
     }
 
     private string GetConfiguredClanTagByElo(int elo)
@@ -248,35 +323,6 @@ public partial class LiteMatchManager
         if (elo >= 1250) return eloCfg.ClanTag_TierB ?? "";
         if (elo >= 1000) return eloCfg.ClanTag_TierC ?? "";
         return eloCfg.ClanTag_TierD ?? "";
-    }
-
-    // 僅在分數狀態真正變更後，延遲 0.2 秒發送單次解鎖封包（平時對槍 0 觸發，完全不掉 FPS）
-    private void RevealScoreboardRanksOnce()
-    {
-        AddTimer(0.2f, () =>
-        {
-            if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
-            try
-            {
-                var filter = new RecipientFilter();
-                ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-                for (int i = 0; i < players.Length; i++)
-                {
-                    var p = players[i];
-                    if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected })
-                    {
-                        filter.Add(p);
-                    }
-                }
-
-                if (filter.Count > 0)
-                {
-                    var msg = UserMessage.FromId(50);
-                    msg.Send(filter);
-                }
-            }
-            catch { }
-        });
     }
 
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
@@ -294,36 +340,6 @@ public partial class LiteMatchManager
             player.Clan = targetTag;
             Utilities.SetStateChanged(player, "CCSPlayerController", "m_szClan");
         }
-
-        // 僅在數值不一致時才寫入網路屬性，平時檢查 0 封包消耗
-        int targetElo = _playerEloScore.TryGetValue(player.SteamID, out int savedElo) && savedElo > 0 ? savedElo : 0;
-        sbyte targetRankType = targetElo > 0 ? (sbyte)11 : (sbyte)0;
-        int targetWins = targetElo > 0 ? 10 : 0;
-
-        bool rankChanged = false;
-        if (player.CompetitiveRankType != targetRankType)
-        {
-            player.CompetitiveRankType = targetRankType;
-            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRankType");
-            rankChanged = true;
-        }
-        if (player.CompetitiveRanking != targetElo)
-        {
-            player.CompetitiveRanking = targetElo;
-            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRanking");
-            rankChanged = true;
-        }
-        if (player.CompetitiveWins != targetWins)
-        {
-            player.CompetitiveWins = targetWins;
-            Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveWins");
-            rankChanged = true;
-        }
-
-        if (rankChanged && targetElo > 0)
-        {
-            RevealScoreboardRanksOnce();
-        }
     }
 
     private void ApplyPlayerRankClanTagBySteamId(ulong steamId)
@@ -337,6 +353,12 @@ public partial class LiteMatchManager
             if (p is { IsValid: true, Handle: not 0, IsBot: false, SteamID: var sid } && sid == steamId)
             {
                 ApplyPlayerRankClanTag(p);
+
+                // 只有已定級玩家 (Elo > 0) 才觸發單次計分板揭露
+                if (_playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
+                {
+                    RevealScoreboardRanksOnce();
+                }
                 break;
             }
         }
@@ -354,6 +376,10 @@ public partial class LiteMatchManager
         if (_playerRankClanTag.ContainsKey(steamId) && _playerEloScore.ContainsKey(steamId))
         {
             ApplyPlayerRankClanTag(player);
+            if (_playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
+            {
+                RevealScoreboardRanksOnce();
+            }
             return;
         }
 
@@ -372,6 +398,7 @@ public partial class LiteMatchManager
 
                 _rankMemoryCache[steamId] = (result, now + 120.0f);
                 _playerRankClanTag[steamId] = result.Found ? GetConfiguredClanTagByElo(result.Elo) : "";
+                // 未定級玩家設為 0，不顯示任何牌子
                 _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
                 Server.NextFrame(() => ApplyPlayerRankClanTagBySteamId(steamId));
@@ -702,6 +729,10 @@ public partial class LiteMatchManager
         {
             PrintPlayerRankToPrivateChat(player, pName, cached.Data);
             ApplyPlayerRankClanTag(player);
+            if (_playerEloScore.TryGetValue(sId, out int elo) && elo > 0)
+            {
+                RevealScoreboardRanksOnce();
+            }
             return;
         }
 
@@ -937,6 +968,7 @@ public partial class LiteMatchManager
                 _playerRankClanTag[steamId] = result.Found
                     ? GetConfiguredClanTagByElo(result.Elo)
                     : "";
+                // 未定級玩家設為 0，不顯示任何牌子
                 _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
                 Server.NextFrame(() =>
@@ -967,7 +999,7 @@ public partial class LiteMatchManager
                 else
                 {
                     Console.WriteLine($"[LiteMatchManager] Rank Query Error: {ex.Message}");
-                    Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
+                    Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
                 }
             }
         }
