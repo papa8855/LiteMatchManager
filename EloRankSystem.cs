@@ -182,7 +182,6 @@ public partial class LiteMatchManager
     private readonly ConcurrentDictionary<ulong, string> _playerRankClanTag = new();
     private readonly ConcurrentDictionary<ulong, int> _playerEloScore = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
-    private float _nextRankRevealBroadcastTime = 0f;
 
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchDeaths = new(8);
@@ -234,7 +233,7 @@ public partial class LiteMatchManager
     private void InitEloClanTagSystem()
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
-        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分顯示系統已啟動！");
+        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (0-GC 事件觸發模式) 已啟動！");
     }
 
     private void UnloadEloClanTagSystem()
@@ -251,35 +250,33 @@ public partial class LiteMatchManager
         return eloCfg.ClanTag_TierD ?? "";
     }
 
-    // 發送 CS2 官方段位解鎖封包 (UserMessage ID 50: CCSUsrMsg_ServerRankRevealAll)，讓玩家按 TAB 隨時能看到優先權分數牌
-    private void BroadcastRankRevealAll(bool force = false)
+    // 僅在分數狀態真正變更後，延遲 0.2 秒發送單次解鎖封包（平時對槍 0 觸發，完全不掉 FPS）
+    private void RevealScoreboardRanksOnce()
     {
-        float now = Server.CurrentTime;
-        if (!force && now < _nextRankRevealBroadcastTime && (_nextRankRevealBroadcastTime - now) <= 5.0f)
-            return;
-
-        _nextRankRevealBroadcastTime = now + 1.5f;
-
-        try
+        AddTimer(0.2f, () =>
         {
-            var filter = new RecipientFilter();
-            ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-            for (int i = 0; i < players.Length; i++)
+            if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
+            try
             {
-                var p = players[i];
-                if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected })
+                var filter = new RecipientFilter();
+                ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+                for (int i = 0; i < players.Length; i++)
                 {
-                    filter.Add(p);
+                    var p = players[i];
+                    if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected })
+                    {
+                        filter.Add(p);
+                    }
+                }
+
+                if (filter.Count > 0)
+                {
+                    var msg = UserMessage.FromId(50);
+                    msg.Send(filter);
                 }
             }
-
-            if (filter.Count > 0)
-            {
-                var msg = UserMessage.FromId(50);
-                msg.Send(filter);
-            }
-        }
-        catch { }
+            catch { }
+        });
     }
 
     private void ApplyPlayerRankClanTag(CCSPlayerController? player)
@@ -298,7 +295,7 @@ public partial class LiteMatchManager
             Utilities.SetStateChanged(player, "CCSPlayerController", "m_szClan");
         }
 
-        // 同步設定 TAB 計分板上的優先權分數 (Premier Rating: Type 11)
+        // 僅在數值不一致時才寫入網路屬性，平時檢查 0 封包消耗
         int targetElo = _playerEloScore.TryGetValue(player.SteamID, out int savedElo) && savedElo > 0 ? savedElo : 0;
         sbyte targetRankType = targetElo > 0 ? (sbyte)11 : (sbyte)0;
         int targetWins = targetElo > 0 ? 10 : 0;
@@ -323,9 +320,9 @@ public partial class LiteMatchManager
             rankChanged = true;
         }
 
-        if (targetElo > 0)
+        if (rankChanged && targetElo > 0)
         {
-            BroadcastRankRevealAll(force: rankChanged);
+            RevealScoreboardRanksOnce();
         }
     }
 
@@ -354,7 +351,7 @@ public partial class LiteMatchManager
         ulong steamId = player.SteamID;
         float now = Server.CurrentTime;
 
-        if (_playerRankClanTag.ContainsKey(steamId))
+        if (_playerRankClanTag.ContainsKey(steamId) && _playerEloScore.ContainsKey(steamId))
         {
             ApplyPlayerRankClanTag(player);
             return;
