@@ -265,12 +265,13 @@ public partial class LiteMatchManager
         }
     }
 
-    // 僅針對「已定級玩家 (ranking > 0)」維持記憶體數值，未定級玩家直接跳過；平常數值未變時直接 continue (0-GC、0封包)
+    // 僅針對「已定級玩家 (ranking > 0)」維持記憶體數值 (顯示放大 10 倍之大字分數)，狀態更新時自動揭露計分板
     private void MaintainScoreboardRanksMemory()
     {
         if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
             return;
 
+        bool anyUpdated = false;
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
         {
@@ -282,7 +283,7 @@ public partial class LiteMatchManager
             if (!_playerEloScore.TryGetValue(controller.SteamID, out int ranking) || ranking <= 0)
                 continue;
 
-            int tabDisplayRanking = ranking * 10;
+            int tabDisplayRanking = ranking * 10; // ★ 僅將 TAB 計分板顯示分數放大 10 倍，顯示千位數大字且不影響實際積分
 
             if (controller.CompetitiveWins == 10 &&
                 controller.CompetitiveRankType == PremierRankType &&
@@ -294,26 +295,23 @@ public partial class LiteMatchManager
             controller.CompetitiveWins = 10;
             controller.CompetitiveRankType = PremierRankType;
             controller.CompetitiveRanking = tabDisplayRanking;
-            {
-                continue;
-            }
-
-            controller.CompetitiveWins = 10;
-            controller.CompetitiveRankType = PremierRankType;
-            controller.CompetitiveRanking = ranking;
             Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveWins");
             Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveRankType");
             Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveRanking");
+            anyUpdated = true;
+        }
+
+        if (anyUpdated)
+        {
+            RevealScoreboardRanksOnce();
         }
     }
 
-    // 僅在玩家進服載入完成或比賽結算時「單次呼叫 1 次」，無任何背景定時器
+    // 觸發客戶端顯示計分板牌子
     private void RevealScoreboardRanksOnce()
     {
         if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
             return;
-
-        if (_serverPlayersCache.Count == 0) return;
 
         try
         {
@@ -323,7 +321,6 @@ public partial class LiteMatchManager
         }
         catch { }
     }
-
     private string GetConfiguredClanTagByElo(int elo)
     {
         var eloCfg = Config.EloSettings;
@@ -348,6 +345,25 @@ public partial class LiteMatchManager
         {
             player.Clan = targetTag;
             Utilities.SetStateChanged(player, "CCSPlayerController", "m_szClan");
+        }
+
+        // ★ 確保在發送 RevealScoreboardRanksOnce 之前，先將放大 10 倍的顯示積分寫入實體並通知狀態改變
+        if (!CoreConfig.FollowCS2ServerGuidelines &&
+            _playerEloScore.TryGetValue(player.SteamID, out int ranking) &&
+            ranking > 0)
+        {
+            int tabDisplayRanking = ranking * 10;
+            if (player.CompetitiveWins != 10 ||
+                player.CompetitiveRankType != PremierRankType ||
+                player.CompetitiveRanking != tabDisplayRanking)
+            {
+                player.CompetitiveWins = 10;
+                player.CompetitiveRankType = PremierRankType;
+                player.CompetitiveRanking = tabDisplayRanking;
+                Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveWins");
+                Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRankType");
+                Utilities.SetStateChanged(player, "CCSPlayerController", "m_iCompetitiveRanking");
+            }
         }
     }
 
@@ -578,39 +594,16 @@ public partial class LiteMatchManager
             bool isCurrentlyOnline = _onlineTeamMapCache.TryGetValue(sid, out var curInfo) && curInfo.Team == info.Team;
             bool isStarter = _initialStarters.Contains(sid);
 
-            if (!isStarter && engagements < 10)
-            {
-                continue;
-            }
+            if (!isStarter && engagements < 10) continue;
 
             if (info.Team == winTeam)
             {
-                if (!isCurrentlyOnline)
-                {
-                    continue;
-                }
-
-                winnersList.Add(new EloPlayerMatchStat
-                {
-                    SteamId = sid.ToString(),
-                    Name = info.Name,
-                    Kills = k,
-                    Deaths = d,
-                    Hs = hs,
-                    Online = true
-                });
+                if (!isCurrentlyOnline) continue;
+                winnersList.Add(new EloPlayerMatchStat { SteamId = sid.ToString(), Name = info.Name, Kills = k, Deaths = d, Hs = hs, Online = true });
             }
             else
             {
-                losersList.Add(new EloPlayerMatchStat
-                {
-                    SteamId = sid.ToString(),
-                    Name = info.Name,
-                    Kills = k,
-                    Deaths = d,
-                    Hs = hs,
-                    Online = isCurrentlyOnline
-                });
+                losersList.Add(new EloPlayerMatchStat { SteamId = sid.ToString(), Name = info.Name, Kills = k, Deaths = d, Hs = hs, Online = isCurrentlyOnline });
             }
         }
 
@@ -637,11 +630,7 @@ public partial class LiteMatchManager
         }
 
         if (winnersList.Count == 0 || losersList.Count == 0) return;
-
-        if (_liveMatchTargetPlayers == 4 && (winnersList.Count < 1 || losersList.Count < 1))
-        {
-            return;
-        }
+        if (_liveMatchTargetPlayers == 4 && (winnersList.Count < 1 || losersList.Count < 1)) return;
 
         int totalWinnerKills = 0;
         for (int i = 0; i < winnersList.Count; i++) totalWinnerKills += winnersList[i].Kills;
@@ -695,7 +684,6 @@ public partial class LiteMatchManager
         string apiUrl = Config.EloSettings.StatsApiUrl;
         _ = Task.Run(() => SendEloReportAsync(apiUrl, payload));
     }
-
     private void PrintPlayerRankToPrivateChat(CCSPlayerController player, string playerName, EloQueryResponse result)
     {
         if (!result.Found)
@@ -868,11 +856,7 @@ public partial class LiteMatchManager
                 if (!response.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"[LiteMatchManager] Elo API HTTP Status Error ({(int)response.StatusCode}), Attempt {attempt}/{maxRetries}");
-                    if (attempt < maxRetries)
-                    {
-                        await Task.Delay(1000).ConfigureAwait(false);
-                        continue;
-                    }
+                    if (attempt < maxRetries) { await Task.Delay(1000).ConfigureAwait(false); continue; }
                     return;
                 }
 
@@ -947,10 +931,7 @@ public partial class LiteMatchManager
             catch (Exception ex)
             {
                 Console.WriteLine($"[LiteMatchManager] Elo API Error (Attempt {attempt}/{maxRetries}): {ex.Message}");
-                if (attempt < maxRetries)
-                {
-                    await Task.Delay(1000).ConfigureAwait(false);
-                }
+                if (attempt < maxRetries) await Task.Delay(1000).ConfigureAwait(false);
             }
         }
     }
@@ -974,9 +955,7 @@ public partial class LiteMatchManager
                 }
 
                 _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
-                _playerRankClanTag[steamId] = result.Found
-                    ? GetConfiguredClanTagByElo(result.Elo)
-                    : "";
+                _playerRankClanTag[steamId] = result.Found ? GetConfiguredClanTagByElo(result.Elo) : "";
                 // 未定級玩家設為 0，不顯示任何牌子
                 _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
