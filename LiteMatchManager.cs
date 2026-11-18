@@ -130,9 +130,9 @@ public sealed class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.1_DotNet10_NativeConVarT";
+    public override string ModuleVersion => "10.0.2_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 原生ConVar<T> + 0-GC架構)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離扣分 + 原生ConVar<T> + 0-GC架構)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -570,15 +570,26 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 ulong steamId = player.SteamID;
                 string pName = player.PlayerName;
 
-                RemovePlayerClanTagCache(steamId);
-                _joinTeamCooldown.Remove(steamId);
-
                 if (_isMatchLive && _readyPlayers.Contains(steamId))
                 {
                     _readyPlayers.Remove(steamId);
                     _lockedTeam.Remove(steamId);
 
-                    if (IsMatchOver()) return HookResult.Continue;
+                    if (IsMatchOver())
+                    {
+                        RemovePlayerClanTagCache(steamId);
+                        _joinTeamCooldown.Remove(steamId);
+                        return HookResult.Continue;
+                    }
+
+                    // 【中途斷線棄權扣分】：於排程 AbortMatch 清空資料前先完成快照並送出 -15 分懲罰
+                    if (Config.EloSettings.EloSystemEnabled)
+                    {
+                        HandlePlayerMidMatchAbandon(steamId, pName, isDisconnect: true);
+                    }
+
+                    RemovePlayerClanTagCache(steamId);
+                    _joinTeamCooldown.Remove(steamId);
 
                     if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
                     {
@@ -593,6 +604,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 }
                 else
                 {
+                    RemovePlayerClanTagCache(steamId);
+                    _joinTeamCooldown.Remove(steamId);
                     _readyPlayers.Remove(steamId);
                     _lockedTeam.Remove(steamId);
                     _playerUnreadyTime.Remove(steamId);
@@ -632,6 +645,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                         _lockedTeam.Remove(steamId);
 
                         if (IsMatchOver()) return HookResult.Continue;
+
+                        // 【中途跳觀戰棄權扣分】：於排程 AbortMatch 清空資料前先完成快照並送出 -15 分懲罰
+                        if (Config.EloSettings.EloSystemEnabled)
+                        {
+                            HandlePlayerMidMatchAbandon(steamId, player.PlayerName, isDisconnect: false);
+                        }
 
                         if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
                         {
@@ -951,9 +970,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         });
     }
 
-    // 【核心防抖動重構】：
-    // 1. 補齊熱身賽與正賽的 targetTeam == 0 (自動選隊) 滿員攔截，防止先生成角色再處死踢回觀戰
-    // 2. 僅在玩家不在觀戰區 (TeamNum != 1) 時才於 NextFrame 移至觀戰區，避免在指令 Hook 中直接同步呼叫 ChangeTeam 引發連環狀態刷新抖動
     private HookResult OnJoinTeam(CCSPlayerController? player, CommandInfo info)
     {
         if (player is not { IsValid: true, Handle: not 0 } || player.IsBot) return HookResult.Continue;
