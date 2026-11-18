@@ -15,9 +15,9 @@ namespace LiteMatchManager;
 
 #pragma warning disable CS8618
 
-// ========================================
+// =========================================
 // 階段對戰 (Phase) 專用設定類別
-// ========================================
+// =========================================
 public sealed class DuelModeConfig
 {
     [JsonPropertyName("Duel_WinLimit")] public int WinLimit { get; set; } = 5;
@@ -132,7 +132,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public override string ModuleName => "LiteMatchManager";
     public override string ModuleVersion => "10.0.2_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離扣分 + 原生ConVar<T> + 0-GC架構)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 原生ConVar<T> + 0-GC架構)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -570,26 +570,21 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 ulong steamId = player.SteamID;
                 string pName = player.PlayerName;
 
+                RemovePlayerClanTagCache(steamId);
+                _joinTeamCooldown.Remove(steamId);
+
                 if (_isMatchLive && _readyPlayers.Contains(steamId))
                 {
                     _readyPlayers.Remove(steamId);
                     _lockedTeam.Remove(steamId);
 
-                    if (IsMatchOver())
-                    {
-                        RemovePlayerClanTagCache(steamId);
-                        _joinTeamCooldown.Remove(steamId);
-                        return HookResult.Continue;
-                    }
+                    if (IsMatchOver()) return HookResult.Continue;
 
-                    // 【中途斷線棄權扣分】：於排程 AbortMatch 清空資料前先完成快照並送出 -15 分懲罰
-                    if (Config.EloSettings.EloSystemEnabled)
+                    // 【不分 1v1 或 2v2】：只要正式開賽且場上已見血 (>= 1 殺)，中離斷線立即扣 15 分
+                    if (!_isCountdownActive && Config.EloSettings.EloSystemEnabled)
                     {
                         HandlePlayerMidMatchAbandon(steamId, pName, isDisconnect: true);
                     }
-
-                    RemovePlayerClanTagCache(steamId);
-                    _joinTeamCooldown.Remove(steamId);
 
                     if (_liveMatchTargetPlayers == 2 || _isCountdownActive)
                     {
@@ -604,8 +599,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 }
                 else
                 {
-                    RemovePlayerClanTagCache(steamId);
-                    _joinTeamCooldown.Remove(steamId);
                     _readyPlayers.Remove(steamId);
                     _lockedTeam.Remove(steamId);
                     _playerUnreadyTime.Remove(steamId);
@@ -646,8 +639,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
                         if (IsMatchOver()) return HookResult.Continue;
 
-                        // 【中途跳觀戰棄權扣分】：於排程 AbortMatch 清空資料前先完成快照並送出 -15 分懲罰
-                        if (Config.EloSettings.EloSystemEnabled)
+                        // 【不分 1v1 或 2v2】：只要正式開賽且場上已見血 (>= 1 殺)，跳去觀戰立即扣 15 分
+                        if (!_isCountdownActive && Config.EloSettings.EloSystemEnabled)
                         {
                             HandlePlayerMidMatchAbandon(steamId, player.PlayerName, isDisconnect: false);
                         }
