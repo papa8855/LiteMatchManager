@@ -194,6 +194,7 @@ public partial class LiteMatchManager
     private readonly Dictionary<ulong, (int Team, string Name)> _matchParticipants = new(8);
     private readonly Dictionary<ulong, (int Team, string Name)> _onlineTeamMapCache = new(8);
     private readonly HashSet<ulong> _initialStarters = new(8);
+    private readonly HashSet<ulong> _penalizedLeavers = new(8);
 
     private bool _hasSubmittedElo = false;
 
@@ -226,6 +227,7 @@ public partial class LiteMatchManager
         _matchParticipants.Clear();
         _onlineTeamMapCache.Clear();
         _initialStarters.Clear();
+        _penalizedLeavers.Clear();
         _rankQueryCooldown.Clear();
         _rankMemoryCache.Clear();
         _topQueryCooldown.Clear();
@@ -429,6 +431,7 @@ public partial class LiteMatchManager
         _matchParticipants.Clear();
         _onlineTeamMapCache.Clear();
         _initialStarters.Clear();
+        _penalizedLeavers.Clear();
         _hasSubmittedElo = false;
 
         if (_isMatchLive)
@@ -508,6 +511,142 @@ public partial class LiteMatchManager
         }
     }
 
+    // =========================================================================
+    // 【中途斷線 / 跳觀戰棄權扣分】：O(1) 快照打包，不影響主執行緒與 AbortMatch 清空時序
+    // =========================================================================
+    private void HandlePlayerMidMatchAbandon(ulong sid, string? currentName, bool isDisconnect)
+    {
+        if (!Config.EloSettings.EloSystemEnabled ||
+            _isServerShuttingDown ||
+            _isChangingMap ||
+            !_isMatchLive ||
+            _isCountdownActive ||
+            _hasSubmittedElo ||
+            sid == 0 ||
+            string.IsNullOrWhiteSpace(Config.EloSettings.StatsApiUrl))
+        {
+            return;
+        }
+
+        // 防止同場重複扣分（例如先跳觀戰再斷線）
+        if (_penalizedLeavers.Contains(sid))
+            return;
+
+        int kills = _matchKills.GetValueOrDefault(sid);
+        int deaths = _matchDeaths.GetValueOrDefault(sid);
+        int hs = _matchHeadshots.GetValueOrDefault(sid);
+
+        // 必須為開局參賽者，或 2v2 中途補位且已交戰至少 3 次的玩家
+        if (!_initialStarters.Contains(sid) && (kills + deaths) < 3)
+            return;
+
+        // 全場總擊殺數未滿 5 殺視為開局異常/閃退，不予扣分
+        int totalMatchKills = 0;
+        foreach (var k in _matchKills.Values) totalMatchKills += k;
+        if (totalMatchKills < 5)
+            return;
+
+        _penalizedLeavers.Add(sid);
+        _rankMemoryCache.TryRemove(sid, out _);
+        _topMemoryCache = null;
+        _topCacheExpireTime = 0f;
+
+        string pName = _matchParticipants.TryGetValue(sid, out var cached) && !string.IsNullOrEmpty(cached.Name)
+            ? cached.Name
+            : (!string.IsNullOrEmpty(currentName) ? currentName : "Player");
+
+        var payload = new EloReportPayload
+        {
+            ApiKey       = Config.EloSettings.StatsApiKey,
+            MapName      = Server.MapName ?? "Unknown",
+            Mode         = "abandon",
+            TargetScore  = Config.MatchSettings.FinalMatchWinScore,
+            LoserSteamId = sid.ToString(),
+            LoserName    = pName,
+            LoserKills   = kills,
+            LoserHs      = hs,
+            Losers       =
+            [
+                new EloPlayerMatchStat
+                {
+                    SteamId = sid.ToString(),
+                    Name    = pName,
+                    Kills   = kills,
+                    Deaths  = deaths,
+                    Hs      = hs,
+                    Online  = !isDisconnect
+                }
+            ]
+        };
+
+        string apiUrl = Config.EloSettings.StatsApiUrl;
+        _ = Task.Run(() => SendAbandonPenaltyAsync(apiUrl, payload, sid));
+    }
+
+    private async Task SendAbandonPenaltyAsync(string apiUrl, EloReportPayload payload, ulong leaverSteamId)
+    {
+        if (!Config.EloSettings.EloSystemEnabled) return;
+
+        const int maxRetries = 2;
+        byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, EloJsonContext.Default.EloReportPayload);
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                if (!Config.EloSettings.EloSystemEnabled) return;
+
+                using var content = new ByteArrayContent(jsonBytes);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+
+                using var response = await SharedHttpClient.PostAsync(apiUrl, content).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(500).ConfigureAwait(false);
+                        continue;
+                    }
+                    return;
+                }
+
+                byte[] resBytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                var result = JsonSerializer.Deserialize(resBytes.AsSpan(), EloJsonContext.Default.EloReportResponse);
+                if (result is not { Success: true } || !Config.EloSettings.EloSystemEnabled) return;
+
+                Server.NextFrame(() =>
+                {
+                    if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
+
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}⚠️ 棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
+
+                    // 僅當該玩家仍在伺服器內（例如跳去觀戰）才更新其記憶體快取與計分板，避免離線玩家殘留快取
+                    ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+                    for (int i = 0; i < players.Length; i++)
+                    {
+                        var p = players[i];
+                        if (p is { IsValid: true, Handle: not 0, IsBot: false, Connected: PlayerConnectedState.Connected, SteamID: var sid } && sid == leaverSteamId)
+                        {
+                            _playerRankClanTag[leaverSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
+                            _playerEloScore[leaverSteamId] = Math.Max(1, result.LoserNewElo);
+                            ApplyPlayerRankClanTagBySteamId(leaverSteamId);
+                            break;
+                        }
+                    }
+                });
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LiteMatchManager] Abandon Penalty API Error (Attempt {attempt}/{maxRetries}): {ex.Message}");
+                if (attempt < maxRetries)
+                {
+                    await Task.Delay(500).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
     private void TrySubmitEloMatchResult(
         int scoreT,
         int scoreCT,
@@ -559,6 +698,8 @@ public partial class LiteMatchManager
 
         foreach (var (sid, info) in _matchParticipants)
         {
+            // 已在中途跳車/跳觀戰扣過 15 分的玩家，完賽不再重複參與結算
+            if (_penalizedLeavers.Contains(sid)) continue;
             if (info.Team != winTeam && info.Team != loseTeam) continue;
 
             int k = _matchKills.GetValueOrDefault(sid);
@@ -999,7 +1140,7 @@ public partial class LiteMatchManager
                 else
                 {
                     Console.WriteLine($"[LiteMatchManager] Rank Query Error: {ex.Message}");
-                    Server.NextFrame(() => _topQueryCooldown.Remove(steamId));
+                    Server.NextFrame(() => _rankQueryCooldown.Remove(steamId));
                 }
             }
         }
