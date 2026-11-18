@@ -15,9 +15,9 @@ namespace LiteMatchManager;
 
 #pragma warning disable CS8618
 
-// =========================================
+// ========================================
 // 階段對戰 (Phase) 專用設定類別
-// =========================================
+// ========================================
 public sealed class DuelModeConfig
 {
     [JsonPropertyName("Duel_WinLimit")] public int WinLimit { get; set; } = 5;
