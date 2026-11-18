@@ -20,6 +20,7 @@ namespace LiteMatchManager;
 public sealed class EloSettingsConfig
 {
     [JsonPropertyName("EloSystemEnabled")] public bool EloSystemEnabled { get; set; } = true;
+    [JsonPropertyName("ShowTabEloScore")] public bool ShowTabEloScore { get; set; } = true;
     [JsonPropertyName("StatsApiUrl")] public string StatsApiUrl { get; set; } = "https://c2t.clouds.tw/1v1/api_elo.php";
     [JsonPropertyName("StatsApiKey")] public string StatsApiKey { get; set; } = "TW_CS_Secret_2026";
     [JsonPropertyName("ClanTag_TierS")] public string ClanTag_TierS { get; set; } = " 傳 奇";
@@ -206,12 +207,18 @@ public partial class LiteMatchManager
     private List<EloTopPlayerItem>? _topMemoryCache = null;
     private float _topCacheExpireTime = 0f;
 
-    // 由主程式 OnConfigParsed 呼叫：根據 EloSystemEnabled 開關決定啟用或徹底關閉所有積分運作
+    // 由主程式 OnConfigParsed 呼叫：根據 EloSystemEnabled 與 ShowTabEloScore 開關決定啟用或關閉對應功能
     private void OnEloConfigParsed(LiteMatchConfig config)
     {
         if (!config.EloSettings.EloSystemEnabled)
         {
             DisableEloSystemCompletely();
+            return;
+        }
+
+        if (!config.EloSettings.ShowTabEloScore)
+        {
+            UnloadEloClanTagSystem();
         }
     }
 
@@ -239,6 +246,13 @@ public partial class LiteMatchManager
     private void InitEloClanTagSystem()
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
+
+        if (!Config.EloSettings.ShowTabEloScore)
+        {
+            UnloadEloClanTagSystem();
+            Console.WriteLine("[LiteMatchManager] Elo 段位標籤系統已啟動 (TAB 優先權數字牌已由設定檔關閉)！");
+            return;
+        }
 
         if (CoreConfig.FollowCS2ServerGuidelines)
         {
@@ -270,7 +284,7 @@ public partial class LiteMatchManager
     // 僅針對「已定級玩家 (ranking > 0)」維持記憶體數值，未定級玩家直接跳過；平常數值未變時直接 continue (0-GC、0封包)
     private void MaintainScoreboardRanksMemory()
     {
-        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
+        if (!Config.EloSettings.EloSystemEnabled || !Config.EloSettings.ShowTabEloScore || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
             return;
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
@@ -303,7 +317,7 @@ public partial class LiteMatchManager
     // 僅在玩家進服載入完成或比賽結算時「單次呼叫 1 次」，無任何背景定時器
     private void RevealScoreboardRanksOnce()
     {
-        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
+        if (!Config.EloSettings.EloSystemEnabled || !Config.EloSettings.ShowTabEloScore || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
             return;
 
         if (_serverPlayersCache.Count == 0) return;
@@ -356,8 +370,8 @@ public partial class LiteMatchManager
             {
                 ApplyPlayerRankClanTag(p);
 
-                // 只有已定級玩家 (Elo > 0) 才觸發單次計分板揭露
-                if (_playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
+                // 只有開啟 TAB 顯示且為已定級玩家 (Elo > 0) 才觸發單次計分板揭露
+                if (Config.EloSettings.ShowTabEloScore && _playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
                 {
                     RevealScoreboardRanksOnce();
                 }
@@ -378,7 +392,7 @@ public partial class LiteMatchManager
         if (_playerRankClanTag.ContainsKey(steamId) && _playerEloScore.ContainsKey(steamId))
         {
             ApplyPlayerRankClanTag(player);
-            if (_playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
+            if (Config.EloSettings.ShowTabEloScore && _playerEloScore.TryGetValue(steamId, out int elo) && elo > 0)
             {
                 RevealScoreboardRanksOnce();
             }
@@ -870,7 +884,7 @@ public partial class LiteMatchManager
         {
             PrintPlayerRankToPrivateChat(player, pName, cached.Data);
             ApplyPlayerRankClanTag(player);
-            if (_playerEloScore.TryGetValue(sId, out int elo) && elo > 0)
+            if (Config.EloSettings.ShowTabEloScore && _playerEloScore.TryGetValue(sId, out int elo) && elo > 0)
             {
                 RevealScoreboardRanksOnce();
             }
