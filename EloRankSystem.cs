@@ -526,7 +526,7 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
-    // 【中途斷線 / 跳觀戰棄權扣分】：O(1) 快照打包，不影響主執行緒與 AbortMatch 清空時序
+    // 【1v1 & 2v2 見血即罰】：只要全場出現第 1 滴血 (總擊殺 >= 1)，中離或跳觀戰立即扣 15 分
     // =========================================================================
     private void HandlePlayerMidMatchAbandon(ulong sid, string? currentName, bool isDisconnect)
     {
@@ -542,28 +542,24 @@ public partial class LiteMatchManager
             return;
         }
 
-        // 防止同場重複扣分（例如先跳觀戰再斷線）
+        // 防止同一名玩家單場被重複扣分（例如先跳觀戰已扣 15 分，隨後又退服斷線）
         if (_penalizedLeavers.Contains(sid))
             return;
 
-        int kills = _matchKills.GetValueOrDefault(sid);
-        int deaths = _matchDeaths.GetValueOrDefault(sid);
-        int hs = _matchHeadshots.GetValueOrDefault(sid);
-
-        // 必須為開局參賽者，或 2v2 中途補位且已交戰至少 3 次的玩家
-        if (!_initialStarters.Contains(sid) && (kills + deaths) < 3)
-            return;
-
-        // 全場總擊殺數未滿 5 殺視為開局異常/閃退，不予扣分
+        // 【見血即罰】：只要全場累計出現 1 殺（代表對戰已正式開始），不論個人是 0 殺 1 死或 0 殺 0 死一律扣 15 分
         int totalMatchKills = 0;
         foreach (var k in _matchKills.Values) totalMatchKills += k;
-        if (totalMatchKills < 5)
+        if (totalMatchKills < 1)
             return;
 
         _penalizedLeavers.Add(sid);
         _rankMemoryCache.TryRemove(sid, out _);
         _topMemoryCache = null;
         _topCacheExpireTime = 0f;
+
+        int kills = _matchKills.GetValueOrDefault(sid);
+        int deaths = _matchDeaths.GetValueOrDefault(sid);
+        int hs = _matchHeadshots.GetValueOrDefault(sid);
 
         string pName = _matchParticipants.TryGetValue(sid, out var cached) && !string.IsNullOrEmpty(cached.Name)
             ? cached.Name
@@ -632,7 +628,7 @@ public partial class LiteMatchManager
                 {
                     if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
 
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}⚠️ 棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
 
                     // 僅當該玩家仍在伺服器內（例如跳去觀戰）才更新其記憶體快取與計分板，避免離線玩家殘留快取
                     ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
