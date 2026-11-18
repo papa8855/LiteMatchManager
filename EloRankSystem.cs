@@ -282,9 +282,18 @@ public partial class LiteMatchManager
             if (!_playerEloScore.TryGetValue(controller.SteamID, out int ranking) || ranking <= 0)
                 continue;
 
+            int tabDisplayRanking = ranking * 10;
+
             if (controller.CompetitiveWins == 10 &&
                 controller.CompetitiveRankType == PremierRankType &&
-                controller.CompetitiveRanking == ranking)
+                controller.CompetitiveRanking == tabDisplayRanking)
+            {
+                continue;
+            }
+
+            controller.CompetitiveWins = 10;
+            controller.CompetitiveRankType = PremierRankType;
+            controller.CompetitiveRanking = tabDisplayRanking;
             {
                 continue;
             }
