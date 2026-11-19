@@ -130,9 +130,9 @@ public sealed class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.4_DotNet10_NativeConVarT";
+    public override string ModuleVersion => "10.0.5_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 單把精準換槍 + 原生ConVar<T> + 0-GC架構)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 原生RemoveWeapons穩定版 + 原生ConVar<T> + 0-GC架構)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -172,7 +172,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     // 防止玩家快速連按選隊或換槍指令引發瞬間抖動
     private readonly Dictionary<ulong, float> _joinTeamCooldown = new(64);
     private readonly HashSet<uint> _weaponReplacePending = new(64);
-    private readonly List<CBasePlayerWeapon> _weaponsToRemoveCache = new(8);
 
     // 【0-GC 實體句柄快取】：取代對槍期間與回合開始的 FindAllEntitiesByDesignerName 全圖掃描
     private readonly List<CHandle<CEntityInstance>> _trackedMapEquips = new(16);
@@ -567,7 +566,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _isServerShuttingDown = true;
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
-            _weaponsToRemoveCache.Clear();
             _ragdollTimerScheduled = false;
             return HookResult.Continue;
         });
@@ -819,7 +817,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _cachedGameRulesProxy = null;
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
-            _weaponsToRemoveCache.Clear();
             _ragdollTimerScheduled = false;
             CacheConVars();
 
@@ -1229,6 +1226,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return;
         }
 
+        if (_currentPhaseIndex >= modes.Count) return;
         var phase = modes[_currentPhaseIndex];
 
         bool isPrimary = phase.PrimaryWeaponsSet.Contains(weaponName);
@@ -1496,10 +1494,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         return (dName, -1);
     }
 
-    // 【核心優化：單把精準替換】：只刪除不符合規則的主武或副武，絕不呼叫 RemoveWeapons() 連帶摧毀刀子、另一把槍與護甲
-    private void ApplySmartLoadout(
+    // 還原原本完全穩定的原生 RemoveWeapons() 流程，杜絕直接 Remove() 手持武器導致換步槍模式卡死當機
+    private static void ApplySmartLoadout(
         CCSPlayerController player,
-        CCSPlayerPawn pawn,
         bool hasKnife,
         string currentPri,
         string currentSec,
@@ -1514,73 +1511,18 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         bool hasWrongPri = (!string.IsNullOrEmpty(currentPri) && !priMatches) || priCount > 1;
         bool hasWrongSec = (!string.IsNullOrEmpty(currentSec) && !secMatches) || secCount > 1;
 
-        if (!hasKnife)
-        {
-            player.GiveNamedItem("weapon_knife");
-        }
-
         if (!hasWrongPri && !hasWrongSec)
         {
+            if (!hasKnife) player.GiveNamedItem("weapon_knife");
             if (!priMatches && !string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
             if (!secMatches && !string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
-            return;
         }
-
-        _weaponsToRemoveCache.Clear();
-        if (pawn.WeaponServices?.MyWeapons is { } weapons)
+        else
         {
-            foreach (var weaponHandle in weapons)
-            {
-                if (weaponHandle.Value is { IsValid: true } w)
-                {
-                    var (_, slotCat) = ClassifyWeaponFast(w);
-                    if ((hasWrongPri && slotCat == 1) || (hasWrongSec && slotCat == 2))
-                    {
-                        _weaponsToRemoveCache.Add(w);
-                    }
-                }
-            }
-        }
-
-        for (int i = 0; i < _weaponsToRemoveCache.Count; i++)
-        {
-            var oldWeapon = _weaponsToRemoveCache[i];
-            if (oldWeapon is { IsValid: true })
-            {
-                oldWeapon.Remove();
-            }
-        }
-        _weaponsToRemoveCache.Clear();
-
-        // 原本為空的欄位可直接補發；剛移除舊槍的欄位延後 1 幀補發，避開同幀槽位衝突導致掉槍
-        string deferredPri = "";
-        string deferredSec = "";
-
-        if (!priMatches && !string.IsNullOrEmpty(targetPri))
-        {
-            if (hasWrongPri) deferredPri = targetPri;
-            else player.GiveNamedItem(targetPri);
-        }
-
-        if (!secMatches && !string.IsNullOrEmpty(targetSec))
-        {
-            if (hasWrongSec) deferredSec = targetSec;
-            else player.GiveNamedItem(targetSec);
-        }
-
-        if (!string.IsNullOrEmpty(deferredPri) || !string.IsNullOrEmpty(deferredSec))
-        {
-            Server.NextFrame(() =>
-            {
-                if (_isServerShuttingDown ||
-                    player is not { IsValid: true, PawnIsAlive: true, TeamNum: 2 or 3 })
-                {
-                    return;
-                }
-
-                if (!string.IsNullOrEmpty(deferredPri)) player.GiveNamedItem(deferredPri);
-                if (!string.IsNullOrEmpty(deferredSec)) player.GiveNamedItem(deferredSec);
-            });
+            player.RemoveWeapons();
+            player.GiveNamedItem("weapon_knife");
+            if (!string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
+            if (!string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
         }
     }
 
@@ -1661,7 +1603,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 if (_playerPrimary.TryGetValue(steamId, out string? prefPri) && phase.PrimaryWeaponsSet.Contains(prefPri))
                     priToGive = prefPri;
 
-                ApplySmartLoadout(player, pawn, hasKnife, currentPri, currentSec, priCount, secCount, priToGive, secToGive);
+                ApplySmartLoadout(player, hasKnife, currentPri, currentSec, priCount, secCount, priToGive, secToGive);
                 ApplySmartArmor(player, pawn, phase.Armor);
 
                 if (phase.Grenades != null)
@@ -1675,7 +1617,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 string targetWarmupPri = _playerPrimary.TryGetValue(steamId, out string? prefPri) ? prefPri : _defaultWarmupPri;
                 string targetWarmupSec = _playerSecondary.TryGetValue(steamId, out string? prefSec) ? prefSec : _defaultWarmupSec;
 
-                ApplySmartLoadout(player, pawn, hasKnife, currentPri, currentSec, priCount, secCount, targetWarmupPri, targetWarmupSec);
+                ApplySmartLoadout(player, hasKnife, currentPri, currentSec, priCount, secCount, targetWarmupPri, targetWarmupSec);
                 if (_defaultWarmupArmor > 0) ApplySmartArmor(player, pawn, _defaultWarmupArmor);
             }
         });
@@ -1683,97 +1625,54 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         return HookResult.Continue;
     }
 
-    // 【核心優化：單把精準換槍】：僅移除並替換目標欄位（主武或副武），保留刀子、另一把槍與護甲不重發
     private void ReplaceWeapon(CCSPlayerController player, string newWeapon)
     {
         uint idx = player.Index;
-        // 防連點鎖：防止玩家在單把替換完成前透過滾輪或巨集連發換槍指令造成實體重複卸載抖動
+        // 單幀防連點鎖：防止玩家在同一個 Tick 內透過滾輪或巨集連發換槍指令造成實體重複卸載抖動
         if (!_weaponReplacePending.Add(idx)) return;
 
         Server.NextFrame(() =>
         {
-            if (_isServerShuttingDown ||
-                player is not { IsValid: true, PawnIsAlive: true, TeamNum: 2 or 3 } ||
-                player.PlayerPawn.Value is not { IsValid: true } pawn ||
-                pawn.WeaponServices?.MyWeapons is not { } weapons)
-            {
-                _weaponReplacePending.Remove(idx);
-                return;
-            }
+            _weaponReplacePending.Remove(idx);
 
-            bool isNewPistol = PistolWeapons.Contains(newWeapon);
-            int targetSlot = isNewPistol ? 2 : 1;
+            if (player is not { IsValid: true, PawnIsAlive: true, TeamNum: 2 or 3 } || player.PlayerPawn.Value is not { IsValid: true } pawn) return;
+            if (pawn.WeaponServices?.MyWeapons is not { } weapons) return;
 
-            _weaponsToRemoveCache.Clear();
-            int slotCount = 0;
-            bool alreadyHasExact = false;
+            string currentPri = "";
+            string currentSec = "";
+            bool hasKnife = false;
 
             foreach (var weaponHandle in weapons)
             {
                 if (weaponHandle.Value is { IsValid: true } weapon)
                 {
                     var (wName, slotCat) = ClassifyWeaponFast(weapon);
-                    if (slotCat == targetSlot)
-                    {
-                        slotCount++;
-                        if (string.Equals(wName, newWeapon, StringComparison.OrdinalIgnoreCase))
-                        {
-                            alreadyHasExact = true;
-                        }
-                        _weaponsToRemoveCache.Add(weapon);
-                    }
+                    if (slotCat == 0) hasKnife = true;
+                    else if (slotCat == 1) currentPri = wName;
+                    else if (slotCat == 2) currentSec = wName;
                 }
             }
 
-            if (alreadyHasExact && slotCount == 1)
+            bool isNewPistol = PistolWeapons.Contains(newWeapon);
+            string targetSec = isNewPistol ? newWeapon : currentSec;
+            string targetPri = isNewPistol ? currentPri : newWeapon;
+
+            if (isNewPistol && string.Equals(currentSec, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
+            if (!isNewPistol && string.Equals(currentPri, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
+
+            int currentArmor = pawn.ArmorValue;
+            bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>()?.HasHelmet ?? false;
+
+            player.RemoveWeapons();
+            if (hasKnife) player.GiveNamedItem("weapon_knife");
+            if (!string.IsNullOrEmpty(targetPri)) player.GiveNamedItem(targetPri);
+            if (!string.IsNullOrEmpty(targetSec)) player.GiveNamedItem(targetSec);
+
+            if (currentArmor > 0)
             {
-                _weaponsToRemoveCache.Clear();
-                _weaponReplacePending.Remove(idx);
-                return;
+                player.GiveNamedItem(hasHelmet ? "item_assaultsuit" : "item_kevlar");
+                pawn.ArmorValue = currentArmor;
             }
-
-            bool removedAny = _weaponsToRemoveCache.Count > 0;
-            for (int i = 0; i < _weaponsToRemoveCache.Count; i++)
-            {
-                var oldWeapon = _weaponsToRemoveCache[i];
-                if (oldWeapon is { IsValid: true })
-                {
-                    oldWeapon.Remove();
-                }
-            }
-            _weaponsToRemoveCache.Clear();
-
-            if (!removedAny)
-            {
-                player.GiveNamedItem(newWeapon);
-                _weaponReplacePending.Remove(idx);
-                return;
-            }
-
-            // 延後 1 幀確認舊槍實體已徹底銷毀後再補發新槍，避免同幀槽位衝突導致掉槍
-            Server.NextFrame(() =>
-            {
-                _weaponReplacePending.Remove(idx);
-
-                if (_isServerShuttingDown ||
-                    player is not { IsValid: true, PawnIsAlive: true, TeamNum: 2 or 3 })
-                {
-                    return;
-                }
-
-                // 防止在極端 1 幀過渡剛好換階段時發出禁用武器
-                var modes = Config.MatchSettings.MatchModes;
-                if (_isMatchLive && !_isCountdownActive && modes.Count > _currentPhaseIndex)
-                {
-                    var phase = modes[_currentPhaseIndex];
-                    if (!phase.PrimaryWeaponsSet.Contains(newWeapon) && !phase.SecondaryWeaponsSet.Contains(newWeapon))
-                    {
-                        return;
-                    }
-                }
-
-                player.GiveNamedItem(newWeapon);
-            });
         });
     }
 
@@ -1899,7 +1798,6 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _playerJoinTime.Clear();
         _joinTeamCooldown.Clear();
         _weaponReplacePending.Clear();
-        _weaponsToRemoveCache.Clear();
 
         _playerPrimary.Clear();
         _playerSecondary.Clear();
