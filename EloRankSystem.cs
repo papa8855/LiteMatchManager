@@ -267,7 +267,7 @@ public partial class LiteMatchManager
             RegisterListener(_scoreboardTickListener);
         }
 
-        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (單次觸發・無定時器版) 已啟動！");
+        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (進服/重進服/結算單次觸發版) 已啟動！");
     }
 
     private void UnloadEloClanTagSystem()
@@ -316,7 +316,7 @@ public partial class LiteMatchManager
         }
     }
 
-    // 僅在玩家進服載入完成或比賽結算時「單次呼叫 1 次」，無任何背景定時器
+    // 僅在進服、離開重進服或結算時呼叫，無任何背景定時器
     private void RevealScoreboardRanksOnce()
     {
         if (!Config.EloSettings.EloSystemEnabled || !Config.EloSettings.ShowTabEloScore || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
@@ -382,10 +382,10 @@ public partial class LiteMatchManager
         }
     }
 
-    // 僅更新目前仍在線上的玩家快取與標籤，避免完賽秒退玩家殘留過期快取
-    private void UpdateOnlinePlayerEloCache(ulong steamId, int newElo)
+    // 僅更新目前仍在線上的玩家快取與標籤，避免離線玩家殘留過期快取；回傳是否需要揭露 TAB
+    private bool UpdateOnlinePlayerEloCache(ulong steamId, int newElo, bool revealImmediately = true)
     {
-        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || steamId == 0) return;
+        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || steamId == 0) return false;
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
@@ -396,13 +396,15 @@ public partial class LiteMatchManager
                 _playerRankClanTag[steamId] = GetConfiguredClanTagByElo(newElo);
                 _playerEloScore[steamId] = Math.Max(1, newElo);
                 ApplyPlayerRankClanTag(p);
-                if (Config.EloSettings.ShowTabEloScore && newElo > 0)
+                bool needReveal = Config.EloSettings.ShowTabEloScore && newElo > 0;
+                if (needReveal && revealImmediately)
                 {
                     RevealScoreboardRanksOnce();
                 }
-                break;
+                return needReveal;
             }
         }
+        return false;
     }
 
     private void FetchPlayerClanTagOnConnect(CCSPlayerController? player)
@@ -679,8 +681,8 @@ public partial class LiteMatchManager
                 {
                     if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
 
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
-                    UpdateOnlinePlayerEloCache(leaverSteamId, result.LoserNewElo);
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}⚠️ 棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
+                    UpdateOnlinePlayerEloCache(leaverSteamId, result.LoserNewElo, revealImmediately: true);
                 });
                 return;
             }
@@ -894,6 +896,7 @@ public partial class LiteMatchManager
         }
     }
 
+    // 【純私訊模式】：僅回傳私訊與中央文字，不修改 TAB 積分亦不觸發全服揭露封包
     private void TriggerPlayerRankQuery(CCSPlayerController player)
     {
         if (!Config.EloSettings.EloSystemEnabled || string.IsNullOrWhiteSpace(Config.EloSettings.StatsApiUrl) || player.SteamID == 0)
@@ -919,11 +922,6 @@ public partial class LiteMatchManager
         if (_rankMemoryCache.TryGetValue(sId, out var cached) && now < cached.ExpireTime && (cached.ExpireTime - now) <= 125.0f)
         {
             PrintPlayerRankToPrivateChat(player, pName, cached.Data);
-            ApplyPlayerRankClanTag(player);
-            if (Config.EloSettings.ShowTabEloScore && _playerEloScore.TryGetValue(sId, out int elo) && elo > 0)
-            {
-                RevealScoreboardRanksOnce();
-            }
             return;
         }
 
@@ -1068,17 +1066,29 @@ public partial class LiteMatchManager
                     {
                         if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
 
+                        bool shouldReveal = false;
                         for (int i = 0; i < result.Winners.Count; i++)
                         {
                             var w = result.Winners[i];
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} + {w.Delta} ▲ {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
-                            if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid)) UpdateOnlinePlayerEloCache(sid, w.NewElo);
+                            if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid) && UpdateOnlinePlayerEloCache(sid, w.NewElo, revealImmediately: false))
+                            {
+                                shouldReveal = true;
+                            }
                         }
                         for (int i = 0; i < result.Losers.Count; i++)
                         {
                             var l = result.Losers[i];
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
-                            if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid)) UpdateOnlinePlayerEloCache(sid, l.NewElo);
+                            if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid) && UpdateOnlinePlayerEloCache(sid, l.NewElo, revealImmediately: false))
+                            {
+                                shouldReveal = true;
+                            }
+                        }
+
+                        if (shouldReveal)
+                        {
+                            RevealScoreboardRanksOnce();
                         }
                     });
                 }
@@ -1093,8 +1103,13 @@ public partial class LiteMatchManager
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.Gold}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
 
-                        if (wSteamId > 0) UpdateOnlinePlayerEloCache(wSteamId, result.WinnerNewElo);
-                        if (lSteamId > 0) UpdateOnlinePlayerEloCache(lSteamId, result.LoserNewElo);
+                        bool shouldReveal = false;
+                        if (wSteamId > 0 && UpdateOnlinePlayerEloCache(wSteamId, result.WinnerNewElo, revealImmediately: false)) shouldReveal = true;
+                        if (lSteamId > 0 && UpdateOnlinePlayerEloCache(lSteamId, result.LoserNewElo, revealImmediately: false)) shouldReveal = true;
+                        if (shouldReveal)
+                        {
+                            RevealScoreboardRanksOnce();
+                        }
                     });
                 }
                 return;
@@ -1110,6 +1125,7 @@ public partial class LiteMatchManager
         }
     }
 
+    // 【純私訊模式】：僅更新查詢快取並私訊本人，不修改 TAB 積分快取亦不觸發計分板揭露
     private async Task QueryPlayerRankAsync(ulong steamId, string playerName, string apiUrl, float queryTime)
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
@@ -1129,11 +1145,6 @@ public partial class LiteMatchManager
                 }
 
                 _rankMemoryCache[steamId] = (result, queryTime + 120.0f);
-                _playerRankClanTag[steamId] = result.Found
-                    ? GetConfiguredClanTagByElo(result.Elo)
-                    : "";
-                // 未定級玩家設為 0，不顯示任何牌子
-                _playerEloScore[steamId] = result.Found ? Math.Max(1, result.Elo) : 0;
 
                 Server.NextFrame(() =>
                 {
@@ -1149,8 +1160,6 @@ public partial class LiteMatchManager
                             break;
                         }
                     }
-
-                    ApplyPlayerRankClanTagBySteamId(steamId);
                 });
                 return;
             }
