@@ -196,6 +196,7 @@ public partial class LiteMatchManager
     private readonly Dictionary<ulong, (int Team, string Name)> _onlineTeamMapCache = new(8);
     private readonly HashSet<ulong> _initialStarters = new(8);
     private readonly HashSet<ulong> _penalizedLeavers = new(8);
+    private readonly HashSet<ulong> _postMatchDisconnected = new(8);
 
     private bool _hasSubmittedElo = false;
 
@@ -235,6 +236,7 @@ public partial class LiteMatchManager
         _onlineTeamMapCache.Clear();
         _initialStarters.Clear();
         _penalizedLeavers.Clear();
+        _postMatchDisconnected.Clear();
         _rankQueryCooldown.Clear();
         _rankMemoryCache.Clear();
         _topQueryCooldown.Clear();
@@ -380,6 +382,29 @@ public partial class LiteMatchManager
         }
     }
 
+    // 僅更新目前仍在線上的玩家快取與標籤，避免完賽秒退玩家殘留過期快取
+    private void UpdateOnlinePlayerEloCache(ulong steamId, int newElo)
+    {
+        if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown || steamId == 0) return;
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, Connected: PlayerConnectedState.Connected, SteamID: var sid } && sid == steamId)
+            {
+                _playerRankClanTag[steamId] = GetConfiguredClanTagByElo(newElo);
+                _playerEloScore[steamId] = Math.Max(1, newElo);
+                ApplyPlayerRankClanTag(p);
+                if (Config.EloSettings.ShowTabEloScore && newElo > 0)
+                {
+                    RevealScoreboardRanksOnce();
+                }
+                break;
+            }
+        }
+    }
+
     private void FetchPlayerClanTagOnConnect(CCSPlayerController? player)
     {
         if (!Config.EloSettings.EloSystemEnabled || _isServerShuttingDown) return;
@@ -435,6 +460,22 @@ public partial class LiteMatchManager
         _fetchingClanTags.TryRemove(steamId, out _);
     }
 
+    // 僅歸零擊殺/死亡/爆頭計數，用於 live.cfg 正式開局瞬間清除熱身過渡期殘留人頭
+    private void ClearEloLiveKillCounters()
+    {
+        if (!Config.EloSettings.EloSystemEnabled) return;
+        _matchKills.Clear();
+        _matchDeaths.Clear();
+        _matchHeadshots.Clear();
+    }
+
+    // 記錄已打滿 30 勝後、結算事件觸發前提前離開的玩家，防止完賽積分蒸發
+    private void RecordPostMatchDisconnect(ulong steamId)
+    {
+        if (!Config.EloSettings.EloSystemEnabled || steamId == 0) return;
+        _postMatchDisconnected.Add(steamId);
+    }
+
     private void ResetEloMatchStats()
     {
         if (!Config.EloSettings.EloSystemEnabled) return;
@@ -446,6 +487,7 @@ public partial class LiteMatchManager
         _onlineTeamMapCache.Clear();
         _initialStarters.Clear();
         _penalizedLeavers.Clear();
+        _postMatchDisconnected.Clear();
         _hasSubmittedElo = false;
 
         if (_isMatchLive)
@@ -477,7 +519,14 @@ public partial class LiteMatchManager
 
     private void RecordEloKill(CCSPlayerController? attacker, CCSPlayerController? victim, bool isHeadshot)
     {
-        if (!Config.EloSettings.EloSystemEnabled || !_isMatchLive || _isCountdownActive) return;
+        if (!Config.EloSettings.EloSystemEnabled ||
+            !_isMatchLive ||
+            _isCountdownActive ||
+            _waitingForLiveRoundStart ||
+            IsWarmupPeriod())
+        {
+            return;
+        }
 
         if (attacker is { IsValid: true, IsBot: false, SteamID: > 0 } &&
             victim is { IsValid: true } &&
@@ -526,7 +575,7 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
-    // 【1v1 & 2v2 見血即罰】：只要全場出現第 1 滴血 (總擊殺 >= 1)，中離或跳觀戰立即扣 15 分
+    // 【1v1 & 2v2 見血即罰】：只要正式開局後全場出現第 1 滴血 (總擊殺 >= 1)，中離或跳觀戰立即扣 15 分
     // =========================================================================
     private void HandlePlayerMidMatchAbandon(ulong sid, string? currentName, bool isDisconnect)
     {
@@ -535,6 +584,8 @@ public partial class LiteMatchManager
             _isChangingMap ||
             !_isMatchLive ||
             _isCountdownActive ||
+            _waitingForLiveRoundStart ||
+            IsWarmupPeriod() ||
             _hasSubmittedElo ||
             sid == 0 ||
             string.IsNullOrWhiteSpace(Config.EloSettings.StatsApiUrl))
@@ -629,20 +680,7 @@ public partial class LiteMatchManager
                     if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
 
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
-
-                    // 僅當該玩家仍在伺服器內（例如跳去觀戰）才更新其記憶體快取與計分板，避免離線玩家殘留快取
-                    ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-                    for (int i = 0; i < players.Length; i++)
-                    {
-                        var p = players[i];
-                        if (p is { IsValid: true, Handle: not 0, IsBot: false, Connected: PlayerConnectedState.Connected, SteamID: var sid } && sid == leaverSteamId)
-                        {
-                            _playerRankClanTag[leaverSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
-                            _playerEloScore[leaverSteamId] = Math.Max(1, result.LoserNewElo);
-                            ApplyPlayerRankClanTagBySteamId(leaverSteamId);
-                            break;
-                        }
-                    }
+                    UpdateOnlinePlayerEloCache(leaverSteamId, result.LoserNewElo);
                 });
                 return;
             }
@@ -727,7 +765,9 @@ public partial class LiteMatchManager
 
             if (info.Team == winTeam)
             {
-                if (!isCurrentlyOnline)
+                // 【漏洞修復】：1v1 開局參賽者或已打滿 30 勝才離開的玩家，即使提前退服也照常完成結算
+                bool allowOfflineWinner = (_liveMatchTargetPlayers == 2 && isStarter) || _postMatchDisconnected.Contains(sid);
+                if (!isCurrentlyOnline && !allowOfflineWinner)
                 {
                     continue;
                 }
@@ -739,7 +779,7 @@ public partial class LiteMatchManager
                     Kills = k,
                     Deaths = d,
                     Hs = hs,
-                    Online = true
+                    Online = isCurrentlyOnline
                 });
             }
             else
@@ -1024,25 +1064,6 @@ public partial class LiteMatchManager
 
                 if (result.Winners is { Count: > 0 } && result.Losers is { Count: > 0 })
                 {
-                    for (int i = 0; i < result.Winners.Count; i++)
-                    {
-                        var w = result.Winners[i];
-                        if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid))
-                        {
-                            _playerRankClanTag[sid] = GetConfiguredClanTagByElo(w.NewElo);
-                            _playerEloScore[sid] = Math.Max(1, w.NewElo);
-                        }
-                    }
-                    for (int i = 0; i < result.Losers.Count; i++)
-                    {
-                        var l = result.Losers[i];
-                        if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid))
-                        {
-                            _playerRankClanTag[sid] = GetConfiguredClanTagByElo(l.NewElo);
-                            _playerEloScore[sid] = Math.Max(1, l.NewElo);
-                        }
-                    }
-
                     Server.NextFrame(() =>
                     {
                         if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
@@ -1051,28 +1072,20 @@ public partial class LiteMatchManager
                         {
                             var w = result.Winners[i];
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{w.Name} {ChatColors.Gold}{w.Rank} {ChatColors.White}積分：{ChatColors.Green}{w.NewElo} + {w.Delta} ▲ {ChatColors.Grey}| 爆頭率 {w.HsRate}%");
-                            if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                            if (ulong.TryParse(w.SteamId.AsSpan(), out ulong sid)) UpdateOnlinePlayerEloCache(sid, w.NewElo);
                         }
                         for (int i = 0; i < result.Losers.Count; i++)
                         {
                             var l = result.Losers[i];
                             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{l.Name} {ChatColors.LightBlue}{l.Rank} {ChatColors.White}積分：{ChatColors.Red}{l.NewElo} - {l.Delta} ▼ {ChatColors.Grey}| 爆頭率 {l.HsRate}%");
-                            if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid)) ApplyPlayerRankClanTagBySteamId(sid);
+                            if (ulong.TryParse(l.SteamId.AsSpan(), out ulong sid)) UpdateOnlinePlayerEloCache(sid, l.NewElo);
                         }
                     });
                 }
                 else
                 {
-                    if (ulong.TryParse(payload.WinnerSteamId.AsSpan(), out ulong wSteamId))
-                    {
-                        _playerRankClanTag[wSteamId] = GetConfiguredClanTagByElo(result.WinnerNewElo);
-                        _playerEloScore[wSteamId] = Math.Max(1, result.WinnerNewElo);
-                    }
-                    if (ulong.TryParse(payload.LoserSteamId.AsSpan(), out ulong lSteamId))
-                    {
-                        _playerRankClanTag[lSteamId] = GetConfiguredClanTagByElo(result.LoserNewElo);
-                        _playerEloScore[lSteamId] = Math.Max(1, result.LoserNewElo);
-                    }
+                    ulong.TryParse(payload.WinnerSteamId.AsSpan(), out ulong wSteamId);
+                    ulong.TryParse(payload.LoserSteamId.AsSpan(), out ulong lSteamId);
 
                     Server.NextFrame(() =>
                     {
@@ -1080,8 +1093,8 @@ public partial class LiteMatchManager
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}👑 勝方：{ChatColors.Lime}{payload.WinnerName} {ChatColors.Gold}{result.WinnerRank} {ChatColors.White}積分：{ChatColors.Green}{result.WinnerNewElo} + {result.WinnerDelta} ▲ {ChatColors.Grey}| 爆頭率 {result.WinnerHsRate}%");
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Grey}💀 敗方：{ChatColors.White}{payload.LoserName} {ChatColors.Gold}{result.LoserRank} {ChatColors.White}積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼ {ChatColors.Grey}| 爆頭率 {result.LoserHsRate}%");
 
-                        if (wSteamId > 0) ApplyPlayerRankClanTagBySteamId(wSteamId);
-                        if (lSteamId > 0) ApplyPlayerRankClanTagBySteamId(lSteamId);
+                        if (wSteamId > 0) UpdateOnlinePlayerEloCache(wSteamId, result.WinnerNewElo);
+                        if (lSteamId > 0) UpdateOnlinePlayerEloCache(lSteamId, result.LoserNewElo);
                     });
                 }
                 return;
