@@ -681,7 +681,7 @@ public partial class LiteMatchManager
                 {
                     if (_isServerShuttingDown || !Config.EloSettings.EloSystemEnabled) return;
 
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Red}⚠️ 棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}棄權懲罰：{ChatColors.Gold}{payload.LoserName} {ChatColors.White}中途離開對戰 | 段位：{ChatColors.LightBlue}{result.LoserRank} {ChatColors.White}| 積分：{ChatColors.Red}{result.LoserNewElo} - {result.LoserDelta} ▼");
                     UpdateOnlinePlayerEloCache(leaverSteamId, result.LoserNewElo, revealImmediately: true);
                 });
                 return;
