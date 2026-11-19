@@ -130,7 +130,7 @@ public sealed class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.2_DotNet10_NativeConVarT";
+    public override string ModuleVersion => "10.0.3_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
     public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 原生ConVar<T> + 0-GC架構)";
 
@@ -182,6 +182,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private bool _isMatchLive = false;
     private bool _isCountdownActive = false;
+    private bool _waitingForLiveRoundStart = false;
     private bool _isChangingMap = false;
     private int _liveMatchTargetPlayers = 0;
     private bool _isServerShuttingDown = false;
@@ -193,6 +194,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
+    private CCSGameRulesProxy? _cachedGameRulesProxy = null;
 
     // 【核心要求 3】：直接採用 CounterStrikeSharp v1.0.379 官方原生 ConVar<T>
     private ConVar<int>? _cvWarmupPauseTimer = null;
@@ -304,6 +306,24 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _cvAllTalk          = ConVar<bool>.Find("sv_alltalk");
         _cvFullAllTalk      = ConVar<bool>.Find("sv_full_alltalk");
         _cvDeadTalk         = ConVar<bool>.Find("sv_deadtalk");
+    }
+
+    // 0-GC 快取檢查目前引擎是否仍處於熱身階段，防止熱身殘留人頭誤觸見血即罰
+    private bool IsWarmupPeriod()
+    {
+        if (_cachedGameRulesProxy is not { IsValid: true })
+        {
+            _cachedGameRulesProxy = null;
+            foreach (var proxy in Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules"))
+            {
+                if (proxy is { IsValid: true })
+                {
+                    _cachedGameRulesProxy = proxy;
+                    break;
+                }
+            }
+        }
+        return _cachedGameRulesProxy?.GameRules?.WarmupPeriod ?? false;
     }
 
     // 僅在換圖時掃描一次既有 game_player_equip，後續皆由 OnEntitySpawned 即時攔截，回合開始 0 迴圈
@@ -578,7 +598,11 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     _readyPlayers.Remove(steamId);
                     _lockedTeam.Remove(steamId);
 
-                    if (IsMatchOver()) return HookResult.Continue;
+                    if (IsMatchOver())
+                    {
+                        RecordPostMatchDisconnect(steamId);
+                        return HookResult.Continue;
+                    }
 
                     // 【不分 1v1 或 2v2】：只要正式開賽且場上已見血 (>= 1 殺)，中離斷線立即扣 15 分
                     if (!_isCountdownActive && Config.EloSettings.EloSystemEnabled)
@@ -637,7 +661,11 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                         _readyPlayers.Remove(steamId);
                         _lockedTeam.Remove(steamId);
 
-                        if (IsMatchOver()) return HookResult.Continue;
+                        if (IsMatchOver())
+                        {
+                            RecordPostMatchDisconnect(steamId);
+                            return HookResult.Continue;
+                        }
 
                         // 【不分 1v1 或 2v2】：只要正式開賽且場上已見血 (>= 1 殺)，跳去觀戰立即扣 15 分
                         if (!_isCountdownActive && Config.EloSettings.EloSystemEnabled)
@@ -751,6 +779,17 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Continue;
         }, HookMode.Pre);
 
+        // 【漏洞修復】：live.cfg 跑完 mp_warmup_end / mp_restartgame 真正進入第 1 回合瞬間，清空任何過渡期殘留人頭
+        RegisterEventHandler<EventRoundAnnounceMatchStart>((@event, info) =>
+        {
+            if (_isMatchLive && !_isCountdownActive)
+            {
+                _waitingForLiveRoundStart = false;
+                ClearEloLiveKillCounters();
+            }
+            return HookResult.Continue;
+        });
+
         RegisterEventHandler<EventPlayerDeath>((@event, info) =>
         {
             if (Config.EloSettings.EloSystemEnabled)
@@ -775,6 +814,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _isServerShuttingDown = false;
             _cachedTeamT = null;
             _cachedTeamCT = null;
+            _cachedGameRulesProxy = null;
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
             _ragdollTimerScheduled = false;
@@ -1305,6 +1345,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         {
             _isMatchLive = true;
             _isCountdownActive = true;
+            _waitingForLiveRoundStart = true;
             _currentPhaseIndex = 0;
             _liveMatchTargetPlayers = totalPlayers;
 
@@ -1377,6 +1418,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 else
                 {
                     _isCountdownActive = false;
+                    _waitingForLiveRoundStart = true;
                     ClearHudImmediate();
 
                     // 再次確保載入 LIVE.CFG 時 AFK 完全停止運作
@@ -1742,6 +1784,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     {
         _isMatchLive = false;
         _isCountdownActive = false;
+        _waitingForLiveRoundStart = false;
         _isChangingMap = false;
         _currentPhaseIndex = 0;
         _phaseStartScoreT = 0;
@@ -1780,7 +1823,17 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         if (_trackedMapEquips.Count > 0) PurgeMapWeaponEntities();
 
         var matchCfg = Config.MatchSettings;
-        if (!_isMatchLive || _isCountdownActive || matchCfg.MatchModes.Count == 0 || _currentPhaseIndex >= matchCfg.MatchModes.Count)
+        if (!_isMatchLive || _isCountdownActive)
+            return HookResult.Continue;
+
+        // 備援保護：若 live.cfg 未觸發 RoundAnnounceMatchStart，於正式非熱身回合開始時解除等待鎖並歸零人頭
+        if (_waitingForLiveRoundStart && !IsWarmupPeriod())
+        {
+            _waitingForLiveRoundStart = false;
+            ClearEloLiveKillCounters();
+        }
+
+        if (matchCfg.MatchModes.Count == 0 || _currentPhaseIndex >= matchCfg.MatchModes.Count)
             return HookResult.Continue;
 
         EnsureTeamEntitiesCached();
