@@ -124,15 +124,16 @@ public sealed class LiteMatchConfig : BasePluginConfig
     [JsonPropertyName("MatchSettings")] public MatchSettingsConfig MatchSettings { get; set; } = new();
     [JsonPropertyName("EloSettings")] public EloSettingsConfig EloSettings { get; set; } = new();
     [JsonPropertyName("AFKSettings")] public AFKSettingsConfig AFKSettings { get; set; } = new();
+    [JsonPropertyName("CustomModeSettings")] public CustomModeSettingsConfig CustomModeSettings { get; set; } = new();
     [JsonPropertyName("Localization")] public LocalizationConfig Localization { get; set; } = new();
 }
 
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.5_DotNet10_NativeConVarT";
+    public override string ModuleVersion => "10.0.6_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
-    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 原生RemoveWeapons穩定版 + 原生ConVar<T> + 0-GC架構)";
+    public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 指定槍模式PK + 原生RemoveWeapons穩定版 + 原生ConVar<T> + 0-GC架構)";
 
     public LiteMatchConfig Config { get; set; } = new();
 
@@ -298,6 +299,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         // 同步初始化 AFK 模組與 Elo 模組開關
         OnAfkConfigParsed(config);
         OnEloConfigParsed(config);
+        OnCustomModeConfigParsed(config);
     }
 
     private void CacheConVars()
@@ -492,7 +494,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 {
                     _reminderRemoveCache.Add(steamId);
 
-                    if (!_isMatchLive && !_readyPlayers.Contains(steamId))
+                    if (!_isMatchLive && !IsCustomModeVoteActive && !_readyPlayers.Contains(steamId))
                     {
                         _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                         int timeLeft = Config.MatchSettings.KickUnreadyPlayerTime - elapsed;
@@ -564,6 +566,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         RegisterEventHandler<EventMapShutdown>((@event, info) =>
         {
             _isServerShuttingDown = true;
+            CancelCustomModeVote(silent: true);
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
             _ragdollTimerScheduled = false;
@@ -631,7 +634,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     _playerSecondary.Remove(steamId);
                     _pendingInitialReminders.Remove(steamId);
                     _hasReceivedInitialReminder.Remove(steamId);
-                    if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
+                    if (!_isMatchLive) Server.NextFrame(() => { OnCustomModeWarmupRosterChanged(); CheckMatchStart(); });
                 }
             }
             return HookResult.Continue;
@@ -689,7 +692,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 跳 去 觀 戰，已 取 消 準 備");
                     }
                     _playerUnreadyTime.Remove(steamId);
-                    if (!_isMatchLive) Server.NextFrame(CheckMatchStart);
+                    if (!_isMatchLive) Server.NextFrame(() => { OnCustomModeWarmupRosterChanged(); CheckMatchStart(); });
                 }
                 else if (newTeam is 2 or 3)
                 {
@@ -766,7 +769,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                                 }
                             });
                         }
-                        Server.NextFrame(CheckMatchStart);
+                        Server.NextFrame(() => { OnCustomModeWarmupRosterChanged(); CheckMatchStart(); });
                     }
                 }
             }
@@ -821,6 +824,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             CacheConVars();
 
             ResetMatchState();
+            ResetCustomModeState(clearWarmupQuota: true);
             OnAfkMapStart();
 
             Server.NextFrame(() =>
@@ -901,6 +905,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         var (activeT, activeCT) = CountActiveCombatPlayers();
         if (activeT == 0 || activeCT == 0) { AbortMatch(); return; }
 
+        if (_isCustomModeLocked) return;
+
         var modes = Config.MatchSettings.MatchModes;
         if (modes.Count == 0 || _currentPhaseIndex >= modes.Count) return;
 
@@ -980,14 +986,18 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         _liveTimer?.Kill(); _liveTimer = null;
 
+        var matchCfg = Config.MatchSettings;
+        var (abortHtml, abortDuration) = _isCustomModeLocked
+            ? GetCustomMatchAbortHud()
+            : ($"{matchCfg.HudHtml_MatchAbort_Line1}<br>{matchCfg.HudHtml_MatchAbort_Line2}<br>", matchCfg.HudDuration_MatchAbort);
+
         ResetMatchState();
         StartAfkManagerWarmup();
 
-        var matchCfg = Config.MatchSettings;
-        ShowHud($"{matchCfg.HudHtml_MatchAbort_Line1}<br>{matchCfg.HudHtml_MatchAbort_Line2}<br>", matchCfg.HudDuration_MatchAbort);
+        ShowHud(abortHtml, abortDuration);
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}玩 家 {ChatColors.Orange}離 退 對 戰 終 止，請 重 新 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}對 戰");
 
-        AddTimer(matchCfg.HudDuration_MatchAbort, () =>
+        AddTimer(abortDuration, () =>
         {
             Server.ExecuteCommand("mp_warmup_start");
 
@@ -1175,6 +1185,11 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
         }
 
+        if (TryHandleCustomModeCommand(player, command))
+        {
+            return HookResult.Continue;
+        }
+
         if (_readyCommandsSet.Contains(command))
         {
             if (!_isMatchLive)
@@ -1273,6 +1288,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return;
         }
         ulong steamId = player.SteamID;
+        if (OnCustomModePlayerReady(player)) return;
+
         if (!_readyPlayers.Add(steamId))
         {
             player.PrintToChat($" {_cachedPrefix} 你已經是 {ChatColors.Green}準備完成{ChatColors.White} 的狀態了！");
@@ -1289,7 +1306,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
 
-        if (targetPlayers > 2)
+        if (targetPlayers > 2 && !IsCustomModeVoteActive)
         {
             string prepString = $"{matchCfg.HudHtml_Prep2v2_Line1}<br>{string.Format(matchCfg.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
             ShowHud(prepString, matchCfg.HudDuration_Prep);
@@ -1313,6 +1330,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private void HandlePlayerUnready(CCSPlayerController player)
     {
         ulong steamId = player.SteamID;
+        OnCustomModePlayerUnready(steamId);
         if (_readyPlayers.Remove(steamId))
         {
             _playerUnreadyTime[steamId] = 0;
@@ -1324,7 +1342,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
 
-            if (targetPlayers > 2)
+            if (targetPlayers > 2 && !IsCustomModeVoteActive)
             {
                 string prepString = $"{matchCfg.HudHtml_Prep2v2_Line1}<br>{string.Format(matchCfg.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
                 ShowHud(prepString, matchCfg.HudDuration_Prep);
@@ -1334,7 +1352,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void CheckMatchStart()
     {
-        if (_isMatchLive) return;
+        if (_isMatchLive || IsCustomModeVoteActive) return;
 
         var matchCfg = Config.MatchSettings;
         var (activeT, activeCT) = CountActiveCombatPlayers();
@@ -1347,7 +1365,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _isMatchLive = true;
             _isCountdownActive = true;
             _waitingForLiveRoundStart = true;
-            _currentPhaseIndex = 0;
+            _currentPhaseIndex = _isCustomModeLocked ? _lockedCustomPhaseIndex : 0;
             _liveMatchTargetPlayers = totalPlayers;
 
             // 【核心要求】：一旦進入正賽，立刻停止 AFK 掛機檢測計時器
@@ -1376,17 +1394,24 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
 
             string modeText = totalPlayers == 2 ? "1 v 1 " : $"{activeT} v {activeCT} ";
-            string displayLimit = matchCfg.MatchModes.Count > 0 ? matchCfg.MatchModes[0].DisplayTarget : "20";
+            string modeDisplayText = _isCustomModeLocked ? $"{modeText}【{GetCustomModeDisplayName()}】" : modeText;
+            string displayLimit = _isCustomModeLocked
+                ? matchCfg.FinalMatchWinScore.ToString()
+                : (matchCfg.MatchModes.Count > 0 ? matchCfg.MatchModes[0].DisplayTarget : "20");
 
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
 
-            string precompiledLine1 = string.Format(matchCfg.HudHtml_Round1_Line1, modeText);
-            string precompiledLine2 = string.Format(matchCfg.HudHtml_Round1_Line2, displayLimit);
+            string precompiledLine1 = _isCustomModeLocked
+                ? GetCustomRound1Line1(modeText)
+                : string.Format(matchCfg.HudHtml_Round1_Line1, modeText);
+            string precompiledLine2 = _isCustomModeLocked
+                ? GetCustomRound1Line2()
+                : string.Format(matchCfg.HudHtml_Round1_Line2, displayLimit);
             const string popupSoundCmd = "play sounds/ui/panorama/popup_reveal_01.vsnd";
 
-            int countdown = (int)matchCfg.HudDuration_MatchStart;
+            int countdown = (int)(_isCustomModeLocked ? Config.CustomModeSettings.HudDuration_CustomMatchStart : matchCfg.HudDuration_MatchStart);
             if (countdown <= 0) countdown = 3;
 
             string[] precompiledHuds = new string[countdown + 1];
@@ -1396,10 +1421,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             {
                 string countdownHtml = $"<b>➡ ➡ ➡<font class='fontSize-l' color='orange'> 倒 數  </font><font class='fontSize-l' color='#DF3935'>{i}</font><font class='fontSize-l' color='orange'>  秒 </font>⬅ ⬅ ⬅</b><br>";
                 precompiledHuds[i] = $"{precompiledLine1}{countdownHtml}{precompiledLine2}";
-                precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.LightRed}{i}{ChatColors.White} 秒 ...";
+                precompiledChats[i] = $" {_cachedPrefix} {ChatColors.Gold}{modeDisplayText}{ChatColors.White} 戰 鬥 開 始！倒 數 {ChatColors.LightRed}{i}{ChatColors.White} 秒 ...";
             }
 
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 雙 方 皆 已 準 備，即 將 開 戰 ...");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeDisplayText}{ChatColors.White} 雙 方 皆 已 準 備，即 將 開 戰 ...");
 
             Action tickLogic = () =>
             {
@@ -1425,7 +1450,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                     // 再次確保載入 LIVE.CFG 時 AFK 完全停止運作
                     StopAfkManagerForLiveMatch();
 
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeText}{ChatColors.White} 比 賽 正 式 開 始");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{modeDisplayText}{ChatColors.White} 比 賽 正 式 開 始");
                     if (activeT >= 2 && activeCT >= 2) Console.WriteLine("[ 2 v 2 團 戰 ] 比 賽 開 始");
 
                     bool is1v1 = _liveMatchTargetPlayers == 2;
@@ -1686,7 +1711,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void CheckAndWarnUnreadyPlayers()
     {
-        if (_isMatchLive) return;
+        if (_isMatchLive || IsCustomModeVoteActive) return;
 
         var matchCfg = Config.MatchSettings;
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
@@ -1729,7 +1754,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastWaitingMessage()
     {
-        if (_isMatchLive) return;
+        if (_isMatchLive || IsCustomModeVoteActive) return;
 
         var (activeT, activeCT) = CountActiveCombatPlayers();
         int totalPlayers = activeT + activeCT;
@@ -1746,7 +1771,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastUnreadyPlayers()
     {
-        if (_isMatchLive) return;
+        if (_isMatchLive || IsCustomModeVoteActive) return;
 
         _unreadyNamesCache.Clear();
         int totalPlayers = 0;
@@ -1801,6 +1826,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         _playerPrimary.Clear();
         _playerSecondary.Clear();
+        ResetCustomModeState(clearWarmupQuota: false);
         ResetEloMatchStats();
 
         _pendingInitialReminders.Clear();
@@ -1854,6 +1880,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             return HookResult.Continue;
         }
 
+        if (_isCustomModeLocked)
+        {
+            ShowCustomRoundStartHud(scoreT, scoreCT);
+            return HookResult.Continue;
+        }
+
         var currentPhase = matchCfg.MatchModes[_currentPhaseIndex];
 
         string fullHudHtml = string.Format(matchCfg.HudHtml_RoundStart_Title, currentPhase.Name, currentPhase.DisplayTarget) +
@@ -1868,6 +1900,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public override void Unload(bool hotReload)
     {
         _isServerShuttingDown = true;
+        UnloadCustomModeManager();
         UnloadEloClanTagSystem();
         UnloadAfkManager();
         base.Unload(hotReload);
