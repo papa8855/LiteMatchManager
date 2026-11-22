@@ -522,6 +522,7 @@ public partial class LiteMatchManager
     private void RecordEloKill(CCSPlayerController? attacker, CCSPlayerController? victim, bool isHeadshot)
     {
         if (!Config.EloSettings.EloSystemEnabled ||
+            (_isCustomModeLocked && !Config.CustomModeSettings.EnableEloInCustomMode) ||
             !_isMatchLive ||
             _isCountdownActive ||
             _waitingForLiveRoundStart ||
@@ -582,6 +583,7 @@ public partial class LiteMatchManager
     private void HandlePlayerMidMatchAbandon(ulong sid, string? currentName, bool isDisconnect)
     {
         if (!Config.EloSettings.EloSystemEnabled ||
+            (_isCustomModeLocked && !Config.CustomModeSettings.EnableEloInCustomMode) ||
             _isServerShuttingDown ||
             _isChangingMap ||
             !_isMatchLive ||
@@ -708,6 +710,7 @@ public partial class LiteMatchManager
         CCSPlayerController? playerCT)
     {
         if (!Config.EloSettings.EloSystemEnabled ||
+            (_isCustomModeLocked && !Config.CustomModeSettings.EnableEloInCustomMode) ||
             _hasSubmittedElo ||
             (_liveMatchTargetPlayers != 2 && _liveMatchTargetPlayers != 4) ||
             winnerScore < Config.MatchSettings.FinalMatchWinScore ||
