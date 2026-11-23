@@ -497,7 +497,8 @@ public partial class LiteMatchManager
             ? $"對 方 邀 請【 {modeName} 模 式 】 PK [ {agreedCount} / {_customVoteRequiredPlayers} ]\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
             : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint} ，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
-        string waitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
+        string proposerWaitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
+        string agreedWaitingMsg = $"已 同 意【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
@@ -505,7 +506,10 @@ public partial class LiteMatchManager
             var p = players[i];
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
             {
-                p.PrintToCenter(_customVoteAgreedPlayers.Contains(p.SteamID) ? waitingMsg : pendingMsg);
+                string msg = p.SteamID == _customVoteProposerId
+                    ? proposerWaitingMsg
+                    : (_customVoteAgreedPlayers.Contains(p.SteamID) ? agreedWaitingMsg : pendingMsg);
+                p.PrintToCenter(msg);
             }
         }
     }
