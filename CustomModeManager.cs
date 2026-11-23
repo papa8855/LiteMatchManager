@@ -18,6 +18,7 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("Enabled")] public bool Enabled { get; set; } = true;
     [JsonPropertyName("AllowIn2v2")] public bool AllowIn2v2 { get; set; } = true;
     [JsonPropertyName("EnableEloInCustomMode")] public bool EnableEloInCustomMode { get; set; } = true;
+    [JsonPropertyName("DisablePistolInSniperAndRifle")] public bool DisablePistolInSniperAndRifle { get; set; } = true;
     [JsonPropertyName("VoteDurationSeconds")] public int VoteDurationSeconds { get; set; } = 30;
     [JsonPropertyName("ProposeCooldownSeconds")] public int ProposeCooldownSeconds { get; set; } = 60;
     [JsonPropertyName("MaxProposalsPerWarmup")] public int MaxProposalsPerWarmup { get; set; } = 2;
@@ -75,6 +76,14 @@ public partial class LiteMatchManager
     private readonly Dictionary<ulong, int> _customProposalCount = new(64);
 
     private bool IsCustomModeVoteActive => _isCustomVoteActive;
+
+    // 僅在「指定模式 PK 的狙擊(1)／步槍(2)」禁小槍；標準 !R 三階段與手槍模式(0)完全不受影響
+    private bool IsPistolDisabledInCurrentMatch()
+    {
+        return _isCustomModeLocked &&
+               Config.CustomModeSettings.DisablePistolInSniperAndRifle &&
+               _currentPhaseIndex is 1 or 2;
+    }
 
     private static string SafeFormat1<T0>(string template, T0 arg0)
     {
@@ -286,7 +295,7 @@ public partial class LiteMatchManager
         string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
         bool isProposer = player.SteamID == _customVoteProposerId;
 
-        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消 {modeName} 模 式 P K 邀請" : $"婉 拒 {modeName} 模 式 恢 復，標 準 對 戰");
+        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消 {modeName} 模 式 P K 邀請" : $"婉 拒 {modeName} 模 式，恢 復 標 準 對 戰");
 
         if (isProposer)
         {
@@ -485,8 +494,8 @@ public partial class LiteMatchManager
         int agreedCount = CountValidAgreedPlayers();
 
         string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint}，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
-            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint}，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
+            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
+            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint} ，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
         string waitingMsg = $"已 同 意【 {modeName} 模 式 】PK ({agreedCount} / {_customVoteRequiredPlayers})，等 待 回 應：{_customVoteRemainingSeconds} 秒";
 
