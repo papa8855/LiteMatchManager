@@ -186,7 +186,7 @@ public partial class LiteMatchManager
     private readonly ConcurrentDictionary<ulong, int> _playerEloScore = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
 
-    private const uint ScoreboardTickInterval = 4; // 64Hz / 4 = 16Hz (若實測會閃爍可改 2=32Hz 或 1=64Hz)
+    private const uint ScoreboardTickInterval = 2; // 64Hz / 4 = 16Hz (若實測會閃爍可改 2=32Hz 或 1=64Hz)
     private uint _scoreboardTickCounter = 0;
     private Listeners.OnTick? _scoreboardTickListener;
 
