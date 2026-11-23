@@ -336,7 +336,7 @@ public partial class LiteMatchManager
             }
 
             int agreedCount = CountValidAgreedPlayers();
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 了{ChatColors.Green}{targetModeName}模式{ChatColors.White} PK！（進 度：{ChatColors.Lime}{agreedCount} / {_customVoteRequiredPlayers}{ChatColors.White}）");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName}模式{ChatColors.White} PK（ 進 度：{ChatColors.Lime}{agreedCount} / {_customVoteRequiredPlayers}{ChatColors.White} ）");
 
             if (agreedCount >= _customVoteRequiredPlayers)
             {
