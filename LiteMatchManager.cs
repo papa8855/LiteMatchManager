@@ -67,7 +67,7 @@ public sealed class MatchSettingsConfig
 
     [JsonPropertyName("Duel_GunMenuMessage")]
     public List<string> GunMenuMessage { get; set; } = [
-        " {Orange}你 可 在 聊 天 欄 位 輸 入 您 要 的 武 器，以 下 是 常 用 武 器",
+        " {Orange}!PK1 [ 手 槍 ]、!PK2 [ 狙 擊 ]、!PK3 [ 步 槍 ] 等 模 式  對 戰",
         " ---------------------------------------------------------------------",
         " [ {LightBlue}手槍{White} ]  {LightBlue}!dg {White}[ 沙鷹 ] 、{LightBlue}!usp {White}[ USP ] 、{LightBlue}!gk {White}[ 格洛克 ] 、{LightBlue}!r8 {White}[ R8 ]",
         " [ {Orange}狙擊{White} ] {Orange}!ssg {White}[ SSG 08 鳥狙 ] 、{Orange}!awp {White}[ AWP狙擊步槍 ]",
