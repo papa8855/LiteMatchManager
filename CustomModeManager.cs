@@ -326,7 +326,7 @@ public partial class LiteMatchManager
 
         if (totalPlayers < 2 || activeT != activeCT || activeT > Config.MatchSettings.MaxPlayersPerTeam)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未，無 法 發 起 指 定 模 式 PK");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未 齊 全，無 法 發 起 {ChatColors.Lime}指 定 模 式 {ChatColors.Orange}PK");
             return;
         }
 
@@ -375,7 +375,7 @@ public partial class LiteMatchManager
         int maxProposals = customCfg.MaxProposalsPerWarmup;
         if (maxProposals > 0 && _customProposalCount.TryGetValue(steamId, out int usedCount) && usedCount >= maxProposals)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}暖 場 指 定 模 式 次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Lime}指 定 模 式 {ChatColors.Orange}次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
             return;
         }
 
