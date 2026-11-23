@@ -286,7 +286,7 @@ public partial class LiteMatchManager
         string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
         bool isProposer = player.SteamID == _customVoteProposerId;
 
-        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消 {modeName} 模 式 P K 邀請" : $"對 方 婉 拒 {modeName} 模 式，恢 復 標 準 對 戰");
+        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消 {modeName} 模 式 P K 邀請" : $"婉 拒 {modeName} 模 式 恢 復，標 準 對 戰");
 
         if (isProposer)
         {
@@ -485,8 +485,8 @@ public partial class LiteMatchManager
         int agreedCount = CountValidAgreedPlayers();
 
         string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint}， 拒 絕 !no：{_customVoteRemainingSeconds} 秒"
-            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint}， 拒 絕 !no： {_customVoteRemainingSeconds} 秒";
+            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint}，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
+            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint}，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
         string waitingMsg = $"已 同 意【 {modeName} 模 式 】PK ({agreedCount} / {_customVoteRequiredPlayers})，等 待 回 應：{_customVoteRemainingSeconds} 秒";
 
