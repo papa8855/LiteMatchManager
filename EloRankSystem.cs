@@ -1,6 +1,5 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.UserMessages;
 using CounterStrikeSharp.API.Modules.Utils;
 using System;
@@ -187,8 +186,9 @@ public partial class LiteMatchManager
     private readonly ConcurrentDictionary<ulong, int> _playerEloScore = new();
     private readonly ConcurrentDictionary<ulong, byte> _fetchingClanTags = new();
 
-    private const float ScoreboardRankSyncIntervalSeconds = 5.0f;
-    private CounterStrikeSharp.API.Modules.Timers.Timer? _scoreboardRankTimer;
+    private const uint ScoreboardTickInterval = 4; // 64Hz / 4 = 16Hz (若實測會閃爍可改 2=32Hz 或 1=64Hz)
+    private uint _scoreboardTickCounter = 0;
+    private Listeners.OnTick? _scoreboardTickListener;
 
     private readonly Dictionary<ulong, int> _matchKills = new(8);
     private readonly Dictionary<ulong, int> _matchDeaths = new(8);
@@ -263,29 +263,31 @@ public partial class LiteMatchManager
             Console.WriteLine("[LiteMatchManager] ⚠️ 警告：addons/counterstrikesharp/configs/core.json 中的 FollowCS2ServerGuidelines 為 true，這會導致 TAB 優先權積分無法顯示！請將其改為 false！");
         }
 
-        if (_scoreboardRankTimer == null)
+        if (_scoreboardTickListener == null)
         {
-            // 不使用 STOP_ON_MAPCHANGE，讓單一 5 秒低頻計時器跨圖持續運作，直到插件卸載或設定關閉才 Kill
-            _scoreboardRankTimer = AddTimer(ScoreboardRankSyncIntervalSeconds, MaintainScoreboardRanksMemory, TimerFlags.REPEAT);
+            _scoreboardTickCounter = 0;
+            _scoreboardTickListener = MaintainScoreboardRanksMemory;
+            RegisterListener(_scoreboardTickListener);
         }
 
-        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (0-OnTick / 5秒低頻巡檢版) 已啟動！");
+        Console.WriteLine("[LiteMatchManager] Elo 段位標籤與 TAB 優先權積分系統 (OnTick 16Hz 節流版) 已啟動！");
     }
 
     private void UnloadEloClanTagSystem()
     {
-        if (_scoreboardRankTimer != null)
+        if (_scoreboardTickListener != null)
         {
             try
             {
-                _scoreboardRankTimer.Kill();
+                RemoveListener(_scoreboardTickListener);
             }
             catch { }
-            _scoreboardRankTimer = null;
+            _scoreboardTickListener = null;
         }
+        _scoreboardTickCounter = 0;
     }
 
-    // 單一玩家即時同步記分板記憶體 (於進服查分、切隊、結算前立即寫入，確保不須等 5 秒即亮牌)
+    // 單一玩家即時同步記分板記憶體 (於進服查分、切隊、結算前立即寫入)
     private void SyncPlayerScoreboardRank(CCSPlayerController controller)
     {
         if (!Config.EloSettings.EloSystemEnabled || !Config.EloSettings.ShowTabEloScore || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
@@ -313,9 +315,12 @@ public partial class LiteMatchManager
         Utilities.SetStateChanged(controller, "CCSPlayerController", "m_iCompetitiveRanking");
     }
 
-    // 每 5 秒低頻巡檢一次，防止 CS2 引擎偶爾重刷記分板欄位；數值未變時直接 return (0-GC、0-OnTick、0封包)
+    // OnTick 16Hz 節流巡檢 (每 4 Tick 檢查一次)，僅針對「已定級玩家 (ranking > 0)」維持記憶體數值；數值未變時直接 return (0-GC、0封包)
     private void MaintainScoreboardRanksMemory()
     {
+        if (++_scoreboardTickCounter % ScoreboardTickInterval != 0)
+            return;
+
         if (!Config.EloSettings.EloSystemEnabled || !Config.EloSettings.ShowTabEloScore || _isServerShuttingDown || CoreConfig.FollowCS2ServerGuidelines)
             return;
 
@@ -369,7 +374,7 @@ public partial class LiteMatchManager
             Utilities.SetStateChanged(player, "CCSPlayerController", "m_szClan");
         }
 
-        // 在送出 ServerRankRevealAll 或玩家切隊當下立即同步 TAB 記憶體，不須等下一個 5 秒週期
+        // 在送出 ServerRankRevealAll 或玩家切隊當下立即同步 TAB 記憶體
         SyncPlayerScoreboardRank(player);
     }
 
