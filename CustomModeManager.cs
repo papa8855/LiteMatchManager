@@ -27,7 +27,7 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("RifleModeCommands")] public List<string> RifleModeCommands { get; set; } = ["pk3", "rifle", "步槍"];
     [JsonPropertyName("RejectCommands")] public List<string> RejectCommands { get; set; } = ["no", "拒絕"];
 
-    // 獨立純模式 HTML HUD 顯示時間與排版設定 (完全複製主程式結構，互不衝突)
+    // 獨立指定模式 HTML HUD 顯示時間與排版設定 (完全複製主程式結構，互不衝突)
     [JsonPropertyName("HudDuration_CustomMatchAbort")] public float HudDuration_CustomMatchAbort { get; set; } = 3.0f;
     [JsonPropertyName("HudDuration_CustomMatchStart")] public float HudDuration_CustomMatchStart { get; set; } = 3.0f;
     [JsonPropertyName("CustomRoundStartHudDuration")] public float CustomRoundStartHudDuration { get; set; } = 1.7f;
@@ -35,12 +35,12 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("HudHtml_CustomMatchAbort_Line1")] public string HudHtml_CustomMatchAbort_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>玩 家 逃 跑 ， {0} 戰 鬥 終 止</font></b><BR>";
     [JsonPropertyName("HudHtml_CustomMatchAbort_Line2")] public string HudHtml_CustomMatchAbort_Line2 { get; set; } = "<b><font class='fontSize-l' color='lime'>比 賽 已 退 回 暖 場 模 式</font></b>";
 
-    // {0} = 對戰規模 (如 1 v 1 )，{1} = 純模式名稱 (如 純步槍)
+    // {0} = 對戰規模 (如 1 v 1 )，{1} = 指定模式名稱 (如 步槍)
     [JsonPropertyName("HudHtml_CustomRound1_Line1")] public string HudHtml_CustomRound1_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>★ {0}{1} 戰 鬥 開 始 ★</font></b><BR>";
     // {0} = 勝利回合數 (對應 FinalMatchWinScore，如 30)
-    [JsonPropertyName("HudHtml_CustomRound1_Line2")] public string HudHtml_CustomRound1_Line2 { get; set; } = "<b><font class='fontSize-l' color='white'>純 模 式 採 </font><font class='fontSize-l' color='lime'>{0}</font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
+    [JsonPropertyName("HudHtml_CustomRound1_Line2")] public string HudHtml_CustomRound1_Line2 { get; set; } = "<b><font class='fontSize-l' color='white'>對 戰 採 </font><font class='fontSize-l' color='lime'>{0}</font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
-    // {0} = 純模式名稱 (如 純步槍)，{1} = 勝利回合數 (如 30)
+    // {0} = 指定模式名稱 (如 步槍)，{1} = 勝利回合數 (如 30)
     [JsonPropertyName("HudHtml_CustomRoundStart_Title")] public string HudHtml_CustomRoundStart_Title { get; set; } = "<b><font class='fontSize-l' color='lime'>{0} </font><font class='fontSize-l' color='gold'>模式 / 搶 </font><font class='fontSize-l' color='Green'>{1}</font><font class='fontSize-l' color='gold'> 勝</font></b><br>";
     // {0} = T 目前比分
     [JsonPropertyName("HudHtml_CustomRoundStart_TScore")] public string HudHtml_CustomRoundStart_TScore { get; set; } = "<b><font class='fontSize-l' color='#FF4500'>目 前 恐 怖 份 子：{0}</font></b><br>";
@@ -144,8 +144,7 @@ public partial class LiteMatchManager
         var modes = Config.MatchSettings.MatchModes;
         if (modes != null && idx >= 0 && idx < modes.Count && !string.IsNullOrWhiteSpace(modes[idx].Name))
         {
-            string rawName = modes[idx].Name.Trim();
-            return rawName.StartsWith("純", StringComparison.Ordinal) ? rawName : $"純{rawName}";
+            return modes[idx].Name.Trim();
         }
 
         return idx switch
@@ -181,7 +180,7 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
-    // 獨立純模式 HTML HUD 供應器 (直接沿用主程式 ShowHud 管線，絕不重疊打架)
+    // 獨立指定模式 HTML HUD 供應器 (直接沿用主程式 ShowHud 管線，絕不重疊打架)
     // =========================================================================
     private string GetCustomRound1Line1(string modeText)
     {
@@ -284,7 +283,7 @@ public partial class LiteMatchManager
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.Orange}拒 絕 了{ChatColors.White}{modeName} {ChatColors.Orange}模 式，恢 復 標 準 對 戰 等 待");
         }
 
-        // 若場上全員原本都已 !R，婉拒純模式後立即接續進入標準對戰，絕不卡死
+        // 若場上全員原本都已 !R，婉拒指定模式後立即接續進入標準對戰，絕不卡死
         CheckMatchStart();
     }
 
@@ -536,7 +535,7 @@ public partial class LiteMatchManager
         // 立刻覆寫中央純文字，避免 0.5 秒開戰延遲期間殘留舊倒數秒數
         BroadcastCenterTextToCombatPlayers($"全員同意{modeName}模式PK！即將開戰...");
 
-        // 鎖定純模式並自動將全體參戰玩家設為已準備
+        // 鎖定指定模式並自動將全體參戰玩家設為已準備
         _isCustomModeLocked = true;
         _lockedCustomPhaseIndex = agreedPhase;
 
@@ -595,7 +594,7 @@ public partial class LiteMatchManager
     // =========================================================================
     // 與 !R 準備 / 取消準備 / 離場變動 的連動掛鉤
     // =========================================================================
-    // 回傳 true 代表發起人原本已 !R、本次打 !R 僅用於撤銷自己的純模式邀請，無須重印「已準備」提示
+    // 回傳 true 代表發起人原本已 !R、本次打 !R 僅用於撤銷自己的指定模式邀請，無須重印「已準備」提示
     private bool OnCustomModePlayerReady(CCSPlayerController player)
     {
         if (!_isCustomVoteActive) return false;
@@ -604,10 +603,10 @@ public partial class LiteMatchManager
         string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
         string cmdHint = GetCustomModePrimaryCommand(_pendingCustomPhaseIndex);
 
-        // 若發起人自己改打 !R，視同放棄純模式提案、配合打標準三階段
+        // 若發起人自己改打 !R，視同放棄指定模式提案、配合打標準三階段
         if (steamId == _customVoteProposerId)
         {
-            CancelCustomModeVote(silent: true, centerNotice: $"發起人已取消{modeName}模式，改為標準對戰");
+            CancelCustomModeVote(silent: true, centerNotice: $"發 起 人 已 取 消 {modeName} 模 式，改 為 標 準 對 戰");
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 改 為 標 準 準 備（!R），取 消{ChatColors.Orange}{modeName}{ChatColors.White} 邀 請");
 
             if (_readyPlayers.Contains(steamId))
@@ -630,7 +629,7 @@ public partial class LiteMatchManager
         if (steamId == _customVoteProposerId || _customVoteAgreedPlayers.Contains(steamId))
         {
             string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{modeName}模式 邀 請 已 自 動 取 消", centerNotice: $"玩家取消準備，{modeName}模式邀請已取消");
+            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{modeName}模 式 邀 請 已 自 動 取 消", centerNotice: $"玩家取消準備，{modeName}模式邀請已取消");
         }
     }
 
