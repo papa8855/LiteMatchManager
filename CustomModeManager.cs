@@ -70,7 +70,7 @@ public partial class LiteMatchManager
     private readonly HashSet<ulong> _customVoteRosterSnapshot = new(8);
     private CounterStrikeSharp.API.Modules.Timers.Timer? _customVoteTimer;
 
-    // 防洗頻與卡房限制 (凍結 !R 踢除計時但不歸零 + 個人冷卻 + 次數上限；僅於換圖重置，防斷線重連刷次數)
+    // 防洗頻與卡房限制 (真暫停 !R 踢除計時但不歸零 + 個人冷卻 + 次數上限；僅於換圖重置，防斷線重連刷次數)
     private readonly Dictionary<ulong, float> _customProposeCooldown = new(64);
     private readonly Dictionary<ulong, int> _customProposalCount = new(64);
 
@@ -106,7 +106,7 @@ public partial class LiteMatchManager
 
         if (!customCfg.Enabled)
         {
-            CancelCustomModeVote(silent: true);
+            CancelCustomModeVote(silent: true, resumeUnreadyTimer: true);
             _isCustomModeLocked = false;
             _lockedCustomPhaseIndex = 0;
         }
@@ -127,7 +127,7 @@ public partial class LiteMatchManager
     // 供主程式 ResetMatchState 呼叫；換圖時額外清空個人冷卻與暖場次數上限
     private void ResetCustomModeState(bool clearWarmupQuota = false)
     {
-        CancelCustomModeVote(silent: true);
+        CancelCustomModeVote(silent: true, resumeUnreadyTimer: false);
         _isCustomModeLocked = false;
         _lockedCustomPhaseIndex = 0;
 
@@ -317,7 +317,7 @@ public partial class LiteMatchManager
 
         if (totalPlayers < 2 || activeT != activeCT || activeT > Config.MatchSettings.MaxPlayersPerTeam)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未 齊 全，無 法 發 起 指 定 模 式 PK");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未，無 法 發 起 指 定 模 式 PK");
             return;
         }
 
@@ -344,7 +344,7 @@ public partial class LiteMatchManager
 
             if (!_customVoteAgreedPlayers.Add(steamId))
             {
-                player.PrintToChat($" {_cachedPrefix} 你 已 同 意 {ChatColors.Gold}{targetModeName}{ChatColors.White} 模 式，等 待 其 他 玩 家 回 應 （ 剩 餘：{ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White} ）");
+                player.PrintToChat($" {_cachedPrefix} 你 已 同 意 {ChatColors.Gold}{targetModeName}{ChatColors.White} 模 式，等 待 其 他 玩 家 回 應（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
                 return;
             }
 
@@ -378,8 +378,9 @@ public partial class LiteMatchManager
             return;
         }
 
-        // 開始建立新提案：先清空殘留的暖場 HTML HUD，確保純文字倒數清晰不重疊
+        // 開始建立新提案：先清空殘留的暖場 HTML HUD，並精準暫停 !R 踢除計時器
         ClearHudImmediate();
+        PauseUnreadyCheckTimer();
 
         _isCustomVoteActive = true;
         _pendingCustomPhaseIndex = targetPhase;
@@ -484,8 +485,8 @@ public partial class LiteMatchManager
         int agreedCount = CountValidAgreedPlayers();
 
         string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 請 輸 入 {cmdHint}，拒 絕 請 輸 入!no：{_customVoteRemainingSeconds} 秒"
-            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 請 輸 入 {cmdHint}，拒 絕 請 輸 入!no： {_customVoteRemainingSeconds} 秒";
+            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint}， 拒 絕 !no：{_customVoteRemainingSeconds} 秒"
+            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint}， 拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
         string waitingMsg = $"已 同 意【 {modeName} 模 式 】PK ({agreedCount} / {_customVoteRequiredPlayers})，等 待 回 應：{_customVoteRemainingSeconds} 秒";
 
@@ -504,7 +505,7 @@ public partial class LiteMatchManager
     {
         if (!_isCustomVoteActive || _isMatchLive || _isServerShuttingDown)
         {
-            CancelCustomModeVote(silent: true);
+            CancelCustomModeVote(silent: true, resumeUnreadyTimer: false);
             return;
         }
 
@@ -569,15 +570,16 @@ public partial class LiteMatchManager
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意 本 場 鎖 定 {ChatColors.Gold}{modeName} 模 式{ChatColors.Lime} 搶 {ChatColors.Green}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Lime}勝");
         CheckMatchStart();
 
-        // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定避免污染下一場標準 !R
+        // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定並恢復 !R 計時器
         if (!_isMatchLive)
         {
             _isCustomModeLocked = false;
             _lockedCustomPhaseIndex = 0;
+            ResumeUnreadyCheckTimer();
         }
     }
 
-    private void CancelCustomModeVote(bool silent, string? reason = null, string? centerNotice = null)
+    private void CancelCustomModeVote(bool silent, string? reason = null, string? centerNotice = null, bool resumeUnreadyTimer = true)
     {
         bool wasActive = _isCustomVoteActive;
 
@@ -594,6 +596,10 @@ public partial class LiteMatchManager
 
         if (wasActive && !_isServerShuttingDown)
         {
+            if (resumeUnreadyTimer)
+            {
+                ResumeUnreadyCheckTimer();
+            }
             if (!string.IsNullOrEmpty(centerNotice))
             {
                 BroadcastCenterTextToCombatPlayers(centerNotice);
