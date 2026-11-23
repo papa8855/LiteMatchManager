@@ -32,11 +32,11 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("HudDuration_CustomMatchStart")] public float HudDuration_CustomMatchStart { get; set; } = 3.0f;
     [JsonPropertyName("CustomRoundStartHudDuration")] public float CustomRoundStartHudDuration { get; set; } = 1.7f;
 
-    [JsonPropertyName("HudHtml_CustomMatchAbort_Line1")] public string HudHtml_CustomMatchAbort_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>玩 家 逃 跑 ， 【{0}】 戰 鬥 終 止</font></b><BR>";
+    [JsonPropertyName("HudHtml_CustomMatchAbort_Line1")] public string HudHtml_CustomMatchAbort_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>玩 家 逃 跑 ， {0} 戰 鬥 終 止</font></b><BR>";
     [JsonPropertyName("HudHtml_CustomMatchAbort_Line2")] public string HudHtml_CustomMatchAbort_Line2 { get; set; } = "<b><font class='fontSize-l' color='lime'>比 賽 已 退 回 暖 場 模 式</font></b>";
 
     // {0} = 對戰規模 (如 1 v 1 )，{1} = 純模式名稱 (如 純步槍)
-    [JsonPropertyName("HudHtml_CustomRound1_Line1")] public string HudHtml_CustomRound1_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>★ {0}【{1}】 戰 鬥 開 始 ★</font></b><BR>";
+    [JsonPropertyName("HudHtml_CustomRound1_Line1")] public string HudHtml_CustomRound1_Line1 { get; set; } = "<b><font class='fontSize-l' color='gold'>★ {0}{1} 戰 鬥 開 始 ★</font></b><BR>";
     // {0} = 勝利回合數 (對應 FinalMatchWinScore，如 30)
     [JsonPropertyName("HudHtml_CustomRound1_Line2")] public string HudHtml_CustomRound1_Line2 { get; set; } = "<b><font class='fontSize-l' color='white'>純 模 式 採 </font><font class='fontSize-l' color='lime'>{0}</font><font class='fontSize-l' color='white'> 回 合 勝 利 制</font></b>";
 
@@ -150,9 +150,9 @@ public partial class LiteMatchManager
 
         return idx switch
         {
-            0 => "純手槍",
-            1 => "純狙擊",
-            2 => "純步槍",
+            0 => "手 槍",
+            1 => "狙 擊",
+            2 => "步 槍",
             _ => "指定武器"
         };
     }
@@ -273,15 +273,15 @@ public partial class LiteMatchManager
         string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
         bool isProposer = player.SteamID == _customVoteProposerId;
 
-        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已取消【{modeName}模式】PK 邀請" : $"對方婉拒【{modeName}模式】，恢復標準對戰");
+        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消{modeName}模 式 P K 邀請" : $"對 方 婉 拒{modeName}模 式，恢復標準對戰");
 
         if (isProposer)
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}取 消 了【 {ChatColors.Orange}{modeName}{ChatColors.White} 】模 式 邀 請");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}取 消 了{ChatColors.Orange}{modeName}{ChatColors.White} 模 式 邀 請");
         }
         else
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.Orange}婉 拒 了【 {ChatColors.White}{modeName} {ChatColors.Orange}】模 式，恢 復 標 準 對 戰 等 待");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.Orange}拒 絕 了{ChatColors.White}{modeName} {ChatColors.Orange}模 式，恢 復 標 準 對 戰 等 待");
         }
 
         // 若場上全員原本都已 !R，婉拒純模式後立即接續進入標準對戰，絕不卡死
@@ -295,7 +295,7 @@ public partial class LiteMatchManager
 
         if (modes == null || targetPhase < 0 || targetPhase >= modes.Count)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}設 定 檔 尚 未 配 置 該 武 器 階 段，無 法 啟 用");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}尚 未 配 置 該 武 器 階 段，無 法 啟 用");
             return;
         }
 
@@ -304,7 +304,7 @@ public partial class LiteMatchManager
 
         if (totalPlayers < 2 || activeT != activeCT || activeT > Config.MatchSettings.MaxPlayersPerTeam)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未 齊 全 或 不 平 衡，無 法 發 起 指 定 模 式 PK");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未，無 法 發 起 指 定 模 式 PK");
             return;
         }
 
@@ -325,18 +325,18 @@ public partial class LiteMatchManager
             {
                 string currentVoteName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
                 string currentCmd = GetCustomModePrimaryCommand(_pendingCustomPhaseIndex);
-                player.PrintToChat($" {_cachedPrefix} 目 前 正 在 投 票【 {ChatColors.Gold}{currentVoteName}{ChatColors.White} 】模 式，請 輸 入 {ChatColors.Lime}{currentCmd} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
+                player.PrintToChat($" {_cachedPrefix} 目 前 正 在 投 票{ChatColors.Gold}{currentVoteName}{ChatColors.White} 模 式，請 輸 入 {ChatColors.Lime}{currentCmd} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
                 return;
             }
 
             if (!_customVoteAgreedPlayers.Add(steamId))
             {
-                player.PrintToChat($" {_cachedPrefix} 你 已 同 意【 {ChatColors.Gold}{targetModeName}{ChatColors.White} 】模 式，等 待 其 他 玩 家 回 應（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+                player.PrintToChat($" {_cachedPrefix} 你 已 同 意{ChatColors.Gold}{targetModeName}{ChatColors.White} 模 式，等 待 其 他 玩 家 回 應（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
                 return;
             }
 
             int agreedCount = CountValidAgreedPlayers();
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 了【 {ChatColors.Green}{targetModeName}模式{ChatColors.White} 】PK！（進 度：{ChatColors.Lime}{agreedCount} / {_customVoteRequiredPlayers}{ChatColors.White}）");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 了{ChatColors.Green}{targetModeName}模式{ChatColors.White} PK！（進 度：{ChatColors.Lime}{agreedCount} / {_customVoteRequiredPlayers}{ChatColors.White}）");
 
             if (agreedCount >= _customVoteRequiredPlayers)
             {
@@ -353,7 +353,7 @@ public partial class LiteMatchManager
         int maxProposals = customCfg.MaxProposalsPerWarmup;
         if (maxProposals > 0 && _customProposalCount.TryGetValue(steamId, out int usedCount) && usedCount >= maxProposals)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}本 場 暖 場 發 起 指 定 模 式 次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}暖 場 指 定 模 式 次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
             return;
         }
 
@@ -400,8 +400,8 @@ public partial class LiteMatchManager
         _pendingInitialReminders.Remove(steamId);
 
         string scaleText = totalPlayers == 2 ? "1 v 1" : $"{activeT} v {activeCT}";
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customVoteProposerName} {ChatColors.White}發 起 {ChatColors.Lime}{scaleText}【 {ChatColors.Gold}{targetModeName}模式{ChatColors.Lime} 】{ChatColors.White}PK 邀 請！");
-        Server.PrintToChatAll($" {_cachedPrefix} 同 意 請 輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 請 輸 入 {ChatColors.Orange}!no {ChatColors.Grey}（{_customVoteRemainingSeconds} 秒 內 有 效）");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customVoteProposerName} {ChatColors.White}發 起 {ChatColors.Lime}{scaleText}{ChatColors.Gold}{targetModeName}模 式{ChatColors.Lime} {ChatColors.White}PK 邀 請");
+        Server.PrintToChatAll($" {_cachedPrefix} 同 意 請 輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 請 輸 入 {ChatColors.Orange}!no");
 
         BroadcastCustomVoteCenterText();
 
@@ -471,10 +471,10 @@ public partial class LiteMatchManager
         int agreedCount = CountValidAgreedPlayers();
 
         string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對方邀請【{modeName}模式】PK ({agreedCount}/{_customVoteRequiredPlayers})！同意請輸入 {cmdHint}（剩餘 {_customVoteRemainingSeconds} 秒）"
-            : $"對方邀請【{modeName}模式】PK！同意請輸入 {cmdHint}（剩餘 {_customVoteRemainingSeconds} 秒）";
+            ? $"對方邀請{modeName}模式PK ({agreedCount} / {_customVoteRequiredPlayers})\n同意輸入 {cmdHint}：{_customVoteRemainingSeconds} 秒"
+            : $"對方邀請{modeName}模式PK！同意輸入 {cmdHint}（剩餘 {_customVoteRemainingSeconds} 秒）";
 
-        string waitingMsg = $"已同意【{modeName}模式】PK ({agreedCount}/{_customVoteRequiredPlayers})，等待對手回應（剩餘 {_customVoteRemainingSeconds} 秒）";
+        string waitingMsg = $"已同意{modeName}模式PK ({agreedCount} / {_customVoteRequiredPlayers})，等待回應：{_customVoteRemainingSeconds} 秒";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
@@ -506,8 +506,8 @@ public partial class LiteMatchManager
         if (_customVoteRemainingSeconds <= 0)
         {
             string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: true, centerNotice: $"【{modeName}模式】PK 邀請已逾時取消");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}【 {ChatColors.White}{modeName}模式 {ChatColors.Orange}】PK 邀 請 已 逾 時 取 消，恢 復 標 準 對 戰 等 待");
+            CancelCustomModeVote(silent: true, centerNotice: $"{modeName}模 式 P K 邀請已逾時取消");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{ChatColors.White}{modeName}模式 {ChatColors.Orange}PK 邀 請 已 逾 時 取 消，恢 復 標 準 對 戰 等 待");
 
             // 若場上全員原本都已 !R，逾時後立即接續進入標準對戰，絕不卡死
             CheckMatchStart();
@@ -534,7 +534,7 @@ public partial class LiteMatchManager
         _customVoteRosterSnapshot.Clear();
 
         // 立刻覆寫中央純文字，避免 0.5 秒開戰延遲期間殘留舊倒數秒數
-        BroadcastCenterTextToCombatPlayers($"全員同意【{modeName}模式】PK！即將開戰...");
+        BroadcastCenterTextToCombatPlayers($"全員同意{modeName}模式PK！即將開戰...");
 
         // 鎖定純模式並自動將全體參戰玩家設為已準備
         _isCustomModeLocked = true;
@@ -553,7 +553,7 @@ public partial class LiteMatchManager
             }
         }
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意！本 場 鎖 定【 {ChatColors.Gold}{modeName}模式{ChatColors.Lime} 】搶 {ChatColors.Green}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Lime}勝！");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意！本 場 鎖 定{ChatColors.Gold}{modeName}模式{ChatColors.Lime} 搶 {ChatColors.Green}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Lime}勝！");
         CheckMatchStart();
 
         // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定避免污染下一場標準 !R
@@ -607,8 +607,8 @@ public partial class LiteMatchManager
         // 若發起人自己改打 !R，視同放棄純模式提案、配合打標準三階段
         if (steamId == _customVoteProposerId)
         {
-            CancelCustomModeVote(silent: true, centerNotice: $"發起人已取消【{modeName}模式】，改為標準對戰");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 改 為 標 準 準 備（!R），取 消【 {ChatColors.Orange}{modeName}{ChatColors.White} 】邀 請");
+            CancelCustomModeVote(silent: true, centerNotice: $"發起人已取消{modeName}模式，改為標準對戰");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 改 為 標 準 準 備（!R），取 消{ChatColors.Orange}{modeName}{ChatColors.White} 邀 請");
 
             if (_readyPlayers.Contains(steamId))
             {
@@ -619,7 +619,7 @@ public partial class LiteMatchManager
         }
 
         // 非發起人打 !R：保留其 !R 狀態（不搶開標準局），並提醒可輸入 !pkX 同意或 !no 拒絕
-        player.PrintToChat($" {_cachedPrefix} 目 前 有【 {ChatColors.Gold}{modeName}模式{ChatColors.White} 】PK 邀 請，輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
+        player.PrintToChat($" {_cachedPrefix} 目 前 有{ChatColors.Gold}{modeName}模式{ChatColors.White} PK 邀 請，輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
         return false;
     }
 
@@ -630,7 +630,7 @@ public partial class LiteMatchManager
         if (steamId == _customVoteProposerId || _customVoteAgreedPlayers.Contains(steamId))
         {
             string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，【 {modeName}模式 】邀 請 已 自 動 取 消", centerNotice: $"玩家取消準備，【{modeName}模式】邀請已取消");
+            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{modeName}模式 邀 請 已 自 動 取 消", centerNotice: $"玩家取消準備，{modeName}模式邀請已取消");
         }
     }
 
