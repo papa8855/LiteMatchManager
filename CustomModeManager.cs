@@ -494,10 +494,10 @@ public partial class LiteMatchManager
         int agreedCount = CountValidAgreedPlayers();
 
         string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
+            ? $"對 方 邀 請【 {modeName} 模 式 】 PK [{agreedCount} / {_customVoteRequiredPlayers}]\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
             : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint} ，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
-        string waitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n( {agreedCount} / {_customVoteRequiredPlayers} ) 等 待 回 應：{_customVoteRemainingSeconds} 秒";
+        string waitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
@@ -576,7 +576,7 @@ public partial class LiteMatchManager
             }
         }
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意 本 場 鎖 定 {ChatColors.Gold}{modeName} 模 式{ChatColors.Lime} 搶 {ChatColors.Green}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Gold}勝");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意 本 場 鎖 定 {ChatColors.Gold}{modeName} 模 式{ChatColors.Lime} 搶 {ChatColors.Gold}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Gold}勝");
         CheckMatchStart();
 
         // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定並恢復 !R 計時器
