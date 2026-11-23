@@ -168,6 +168,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private readonly Dictionary<ulong, string> _playerSecondary = new(64);
     private readonly Dictionary<ulong, float> _pendingInitialReminders = new(64);
     private readonly List<ulong> _reminderRemoveCache = new(16);
+    private readonly List<ulong> _joinTimeKeysCache = new(64);
     private readonly HashSet<ulong> _hasReceivedInitialReminder = new(64);
 
     // 防止玩家快速連按選隊或換槍指令引發瞬間抖動
@@ -189,6 +190,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private bool _isServerShuttingDown = false;
 
     private CounterStrikeSharp.API.Modules.Timers.Timer? _privateCheckTimer;
+    private float _nextUnreadyCheckTime = 0f;
+    private float _pausedUnreadyRemaining = -1f;
+    private float _unreadyPauseStartTime = 0f;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _publicBroadcastTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer;
@@ -566,7 +570,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         RegisterEventHandler<EventMapShutdown>((@event, info) =>
         {
             _isServerShuttingDown = true;
-            CancelCustomModeVote(silent: true);
+            CancelCustomModeVote(silent: true, resumeUnreadyTimer: false);
+            _privateCheckTimer?.Kill();
+            _privateCheckTimer = null;
+            _pausedUnreadyRemaining = -1f;
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
             _ragdollTimerScheduled = false;
@@ -1400,6 +1407,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 : (matchCfg.MatchModes.Count > 0 ? matchCfg.MatchModes[0].DisplayTarget : "20");
 
             _privateCheckTimer?.Kill(); _privateCheckTimer = null;
+            _nextUnreadyCheckTime = 0f;
+            _pausedUnreadyRemaining = -1f;
+            _unreadyPauseStartTime = 0f;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
 
@@ -1709,6 +1719,101 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
+    private void StartUnreadyCheckTimer(float interval)
+    {
+        _privateCheckTimer?.Kill();
+        _privateCheckTimer = null;
+        _pausedUnreadyRemaining = -1f;
+        _unreadyPauseStartTime = 0f;
+
+        if (_isMatchLive || _isServerShuttingDown) return;
+
+        float safeInterval = interval > 0.1f ? interval : 1.0f;
+        _nextUnreadyCheckTime = Server.CurrentTime + safeInterval;
+        _privateCheckTimer = AddTimer(safeInterval, OnUnreadyCheckTimerFired, TimerFlags.REPEAT);
+    }
+
+    private void OnUnreadyCheckTimerFired()
+    {
+        if (_isMatchLive || IsCustomModeVoteActive || _isServerShuttingDown) return;
+
+        float interval = Config.MatchSettings.UnreadyReminderInterval;
+        float safeInterval = interval > 0.1f ? interval : 1.0f;
+        _nextUnreadyCheckTime = Server.CurrentTime + safeInterval;
+        CheckAndWarnUnreadyPlayers();
+    }
+
+    // 【真暫停】：發起 !pk 投票瞬間停止 60 秒計時器並記住精準剩餘秒數 (0-GC、不進 OnTick)
+    private void PauseUnreadyCheckTimer()
+    {
+        if (_privateCheckTimer == null || _pausedUnreadyRemaining >= 0f || _isMatchLive || _isServerShuttingDown)
+            return;
+
+        float now = Server.CurrentTime;
+        float maxInterval = Config.MatchSettings.UnreadyReminderInterval > 0.1f
+            ? Config.MatchSettings.UnreadyReminderInterval
+            : 60.0f;
+
+        float remaining = _nextUnreadyCheckTime - now;
+        if (remaining < 0.5f) remaining = 0.5f;
+        else if (remaining > maxInterval) remaining = maxInterval;
+
+        _privateCheckTimer.Kill();
+        _privateCheckTimer = null;
+
+        _pausedUnreadyRemaining = remaining;
+        _unreadyPauseStartTime = now;
+    }
+
+    // 【真續算】：投票取消／拒絕／逾時後，從原本凍結的剩餘秒數原封不動接續倒數
+    private void ResumeUnreadyCheckTimer()
+    {
+        if (_pausedUnreadyRemaining < 0f) return;
+
+        float remaining = _pausedUnreadyRemaining;
+        float pauseStart = _unreadyPauseStartTime;
+        _pausedUnreadyRemaining = -1f;
+        _unreadyPauseStartTime = 0f;
+
+        if (_isMatchLive || IsCustomModeVoteActive || _isServerShuttingDown)
+            return;
+
+        float now = Server.CurrentTime;
+        float pausedDuration = now - pauseStart;
+        if (pausedDuration > 0f && _playerJoinTime.Count > 0)
+        {
+            _joinTimeKeysCache.Clear();
+            foreach (ulong sid in _playerJoinTime.Keys)
+            {
+                _joinTimeKeysCache.Add(sid);
+            }
+            for (int i = 0; i < _joinTimeKeysCache.Count; i++)
+            {
+                ulong sid = _joinTimeKeysCache[i];
+                float oldJoinTime = _playerJoinTime[sid];
+                _playerJoinTime[sid] = oldJoinTime < pauseStart ? oldJoinTime + pausedDuration : now;
+            }
+            _joinTimeKeysCache.Clear();
+        }
+
+        _privateCheckTimer?.Kill();
+        _nextUnreadyCheckTime = now + remaining;
+        _privateCheckTimer = AddTimer(remaining, OnResumedUnreadyCheckFired);
+    }
+
+    private void OnResumedUnreadyCheckFired()
+    {
+        _privateCheckTimer = null;
+        if (_isMatchLive || IsCustomModeVoteActive || _isServerShuttingDown) return;
+
+        CheckAndWarnUnreadyPlayers();
+
+        if (!_isMatchLive && !IsCustomModeVoteActive && !_isServerShuttingDown)
+        {
+            StartUnreadyCheckTimer(Config.MatchSettings.UnreadyReminderInterval);
+        }
+    }
+
     private void CheckAndWarnUnreadyPlayers()
     {
         if (_isMatchLive || IsCustomModeVoteActive) return;
@@ -1836,8 +1941,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         var matchCfg = Config.MatchSettings;
         _liveTimer?.Kill(); _liveTimer = null;
-        _privateCheckTimer?.Kill();
-        _privateCheckTimer = AddTimer(matchCfg.UnreadyReminderInterval, CheckAndWarnUnreadyPlayers, TimerFlags.REPEAT);
+        StartUnreadyCheckTimer(matchCfg.UnreadyReminderInterval);
 
         _publicBroadcastTimer?.Kill();
         _publicBroadcastTimer = AddTimer(matchCfg.PublicUnreadyReminderInterval, BroadcastUnreadyPlayers, TimerFlags.REPEAT);
@@ -1900,6 +2004,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     public override void Unload(bool hotReload)
     {
         _isServerShuttingDown = true;
+        _privateCheckTimer?.Kill();
+        _privateCheckTimer = null;
         UnloadCustomModeManager();
         UnloadEloClanTagSystem();
         UnloadAfkManager();
