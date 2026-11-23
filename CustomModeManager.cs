@@ -524,7 +524,7 @@ public partial class LiteMatchManager
 
         if (!IsCustomVoteRosterStillIntact())
         {
-            CancelCustomModeVote(silent: false, reason: "場 上 人 數 變 動，指 定 模 式 邀 請 已 自 動 取 消", centerNotice: "人 數 變 動，指 定 模 式 邀 請 已 取 消");
+            CancelCustomModeVote(silent: false, reason: $"場 上 人 數 變 動，{ChatColors.Lime}指 定 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: "人 數 變 動，指 定 模 式 邀 請 已 取 消");
             CheckMatchStart();
             return;
         }
@@ -662,7 +662,7 @@ public partial class LiteMatchManager
         if (steamId == _customVoteProposerId || _customVoteAgreedPlayers.Contains(steamId))
         {
             string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{modeName} 模 式 邀 請 已 自 動 取 消", centerNotice: $"玩 家 取 消 準 備，{modeName} 模 式 邀 請 已 取 消");
+            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{ChatColors.Lime}{modeName} 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: $"玩 家 取 消 準 備，{modeName} 模 式 已 取 消");
         }
     }
 
@@ -672,7 +672,7 @@ public partial class LiteMatchManager
 
         if (!IsCustomVoteRosterStillIntact())
         {
-            CancelCustomModeVote(silent: false, reason: "場 上 玩 家 變 動，指 定 模 式 邀 請 已 自 動 取 消", centerNotice: "場 上 玩 家 變 動，指 定 模 式 邀 請 已 取 消");
+            CancelCustomModeVote(silent: false, reason: $"場 上 玩 家 變 動，{ChatColors.Lime}指 定 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: "場 上 玩 家 變 動，指 定 模 式 已 取 消");
         }
     }
 }
