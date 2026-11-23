@@ -497,7 +497,7 @@ public partial class LiteMatchManager
             ? $"對 方 邀 請【 {modeName} 模 式 】 PK ({agreedCount} / {_customVoteRequiredPlayers})\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
             : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint} ，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
 
-        string waitingMsg = $"你 發 起【 {modeName} 模 式 】PK ({agreedCount} / {_customVoteRequiredPlayers})\n等 待 對 方 回 應：{_customVoteRemainingSeconds} 秒";
+        string waitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n( {agreedCount} / {_customVoteRequiredPlayers} )等 待 對 方 回 應：{_customVoteRemainingSeconds} 秒";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
