@@ -131,7 +131,7 @@ public sealed class LiteMatchConfig : BasePluginConfig
 public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfig>
 {
     public override string ModuleName => "LiteMatchManager";
-    public override string ModuleVersion => "10.0.6_DotNet10_NativeConVarT";
+    public override string ModuleVersion => "10.0.7_DotNet10_NativeConVarT";
     public override string ModuleAuthor => "Optimized (.NET 10 0-GC)";
     public override string ModuleDescription => "原生30勝換圖 (整合段位ClanTag + 暖身AFK + 中離見血即罰 + 指定槍模式PK + 原生RemoveWeapons穩定版 + 原生ConVar<T> + 0-GC架構)";
 
@@ -196,6 +196,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
     private CounterStrikeSharp.API.Modules.Timers.Timer? _publicBroadcastTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _waitingTimer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? _liveTimer;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _initialReminderTimer;
 
     private CCSTeam? _cachedTeamT = null;
     private CCSTeam? _cachedTeamCT = null;
@@ -209,6 +210,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private string _activeCenterMessage = "";
     private float _centerMessageExpiration = 0f;
+    private Listeners.OnTick? _hudTickListener;
 
     // 支援不分大小寫的色彩標籤解析 (相容 zh-Hant.json 與主設定檔)
     private static string ReplaceColorTags(string input)
@@ -434,10 +436,47 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         }
     }
 
+    // 【按需掛載 HUD OnTick】：僅在有 HTML HUD 需要顯示期間註冊，平常對槍 0 次 OnTick
+    private void EnsureHudTickRegistered()
+    {
+        if (_hudTickListener == null && !_isServerShuttingDown)
+        {
+            _hudTickListener = OnHudTick;
+            RegisterListener(_hudTickListener);
+        }
+    }
+
+    // 延遲至 NextFrame 才拆卸，且移除前再次確認沒有新 HUD 進來，杜絕競態漏字與遍歷修改例外
+    private void DisableHudTickIfIdle()
+    {
+        if (!string.IsNullOrEmpty(_activeCenterMessage)) return;
+        ForceRemoveHudTickListener();
+    }
+
+    private void ForceRemoveHudTickListener()
+    {
+        if (_hudTickListener != null)
+        {
+            try
+            {
+                RemoveListener(_hudTickListener);
+            }
+            catch { }
+            _hudTickListener = null;
+        }
+    }
+
     private void ShowHud(string html, float duration)
     {
+        if (string.IsNullOrEmpty(html) || duration <= 0f)
+        {
+            ClearHudImmediate();
+            return;
+        }
+
         _activeCenterMessage = html;
         _centerMessageExpiration = Server.CurrentTime + duration;
+        EnsureHudTickRegistered();
     }
 
     private void ClearHudImmediate()
@@ -453,31 +492,56 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
             }
         }
+
+        if (_hudTickListener != null)
+        {
+            Server.NextFrame(DisableHudTickIfIdle);
+        }
     }
 
-    private void OnTick()
+    private void OnHudTick()
     {
-        if (!string.IsNullOrEmpty(_activeCenterMessage))
+        if (string.IsNullOrEmpty(_activeCenterMessage))
         {
-            ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-            if (Server.CurrentTime <= _centerMessageExpiration)
+            Server.NextFrame(DisableHudTickIfIdle);
+            return;
+        }
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        if (Server.CurrentTime <= _centerMessageExpiration)
+        {
+            for (int i = 0; i < players.Length; i++)
             {
-                for (int i = 0; i < players.Length; i++)
-                {
-                    var p = players[i];
-                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
-                }
-            }
-            else
-            {
-                _activeCenterMessage = "";
-                for (int i = 0; i < players.Length; i++)
-                {
-                    var p = players[i];
-                    if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
-                }
+                var p = players[i];
+                if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml(_activeCenterMessage);
             }
         }
+        else
+        {
+            _activeCenterMessage = "";
+            _centerMessageExpiration = 0f;
+            for (int i = 0; i < players.Length; i++)
+            {
+                var p = players[i];
+                if (p is { IsValid: true, TeamNum: 2 or 3 }) p.PrintToCenterHtml("&#8203;", 0);
+            }
+            Server.NextFrame(DisableHudTickIfIdle);
+        }
+    }
+
+    private void StartInitialReminderTimer()
+    {
+        _initialReminderTimer?.Kill();
+        _initialReminderTimer = null;
+
+        if (_isMatchLive || _isServerShuttingDown) return;
+        _initialReminderTimer = AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
+    }
+
+    private void StopInitialReminderTimer()
+    {
+        _initialReminderTimer?.Kill();
+        _initialReminderTimer = null;
     }
 
     private void CheckPendingReminders()
@@ -541,8 +605,8 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         AddCommandListener("jointeam", OnJoinTeam);
         AddCommandListener("drop", (player, info) => HookResult.Handled);
 
-        RegisterListener<Listeners.OnTick>(OnTick);
-        AddTimer(1.0f, CheckPendingReminders, TimerFlags.REPEAT);
+        // HTML HUD 的 OnTick 改於 ShowHud() 時按需動態掛載，平時 0 Tick 負擔
+        StartInitialReminderTimer();
 
         // 【核心優化】：以 OnEntitySpawned 取代回合中與死亡後的 FindAllEntitiesByDesignerName 全圖迴圈掃描
         RegisterListener<Listeners.OnEntitySpawned>(entity =>
@@ -573,6 +637,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             CancelCustomModeVote(silent: true, resumeUnreadyTimer: false);
             _privateCheckTimer?.Kill();
             _privateCheckTimer = null;
+            StopInitialReminderTimer();
+            _activeCenterMessage = "";
+            _centerMessageExpiration = 0f;
+            ForceRemoveHudTickListener();
             _pausedUnreadyRemaining = -1f;
             _trackedMapEquips.Clear();
             _pendingRagdolls.Clear();
@@ -1252,11 +1320,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         var phase = modes[_currentPhaseIndex];
 
         bool isPrimary = phase.PrimaryWeaponsSet.Contains(weaponName);
-        bool isSecondary = phase.SecondaryWeaponsSet.Contains(weaponName);
+        bool isSecondary = !IsPistolDisabledInCurrentMatch() && phase.SecondaryWeaponsSet.Contains(weaponName);
 
         if (!isPrimary && !isSecondary)
         {
-            player.PrintToChat($" {_cachedPrefix} 當 前 為 【 {ChatColors.Gold}{phase.Name}{ChatColors.White} 】 模 式，禁 止 使 用 該 武 器");
+            string modeDisplayName = _isCustomModeLocked ? GetCustomModeDisplayName() : phase.Name;
+            player.PrintToChat($" {_cachedPrefix} 當 前 為 【 {ChatColors.Gold}{modeDisplayName}{ChatColors.White} 】 模 式，禁 止 使 用 該 武 器");
             player.PrintToCenter("該 模 式 不 能 使 用 這 把 武 器");
             return;
         }
@@ -1412,6 +1481,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             _unreadyPauseStartTime = 0f;
             _publicBroadcastTimer?.Kill(); _publicBroadcastTimer = null;
             _waitingTimer?.Kill(); _waitingTimer = null;
+            StopInitialReminderTimer();
 
             string precompiledLine1 = _isCustomModeLocked
                 ? GetCustomRound1Line1(modeText)
@@ -1630,8 +1700,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 var phase = modes[_currentPhaseIndex];
                 pawn.Health = phase.Health;
 
-                string secToGive = phase.SecondaryWeapons.Count > 0 ? phase.SecondaryWeapons[0] : "";
-                if (_playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
+                bool disablePistol = IsPistolDisabledInCurrentMatch();
+
+                string secToGive = (!disablePistol && phase.SecondaryWeapons.Count > 0) ? phase.SecondaryWeapons[0] : "";
+                if (!disablePistol && _playerSecondary.TryGetValue(steamId, out string? prefSec) && phase.SecondaryWeaponsSet.Contains(prefSec))
                     secToGive = prefSec;
 
                 string priToGive = phase.PrimaryWeapons.Count > 0 ? phase.PrimaryWeapons[0] : "";
@@ -1689,11 +1761,14 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
             }
 
             bool isNewPistol = PistolWeapons.Contains(newWeapon);
-            string targetSec = isNewPistol ? newWeapon : currentSec;
+            bool disablePistol = IsPistolDisabledInCurrentMatch();
+            if (isNewPistol && disablePistol) return;
+
+            string targetSec = disablePistol ? "" : (isNewPistol ? newWeapon : currentSec);
             string targetPri = isNewPistol ? currentPri : newWeapon;
 
             if (isNewPistol && string.Equals(currentSec, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
-            if (!isNewPistol && string.Equals(currentPri, newWeapon, StringComparison.OrdinalIgnoreCase)) return;
+            if (!isNewPistol && string.Equals(currentPri, newWeapon, StringComparison.OrdinalIgnoreCase) && (!disablePistol || string.IsNullOrEmpty(currentSec))) return;
 
             int currentArmor = pawn.ArmorValue;
             bool hasHelmet = pawn.ItemServices?.As<CCSPlayer_ItemServices>()?.HasHelmet ?? false;
@@ -1938,10 +2013,12 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _hasReceivedInitialReminder.Clear();
         _activeCenterMessage = "";
         _centerMessageExpiration = 0f;
+        ForceRemoveHudTickListener();
 
         var matchCfg = Config.MatchSettings;
         _liveTimer?.Kill(); _liveTimer = null;
         StartUnreadyCheckTimer(matchCfg.UnreadyReminderInterval);
+        StartInitialReminderTimer();
 
         _publicBroadcastTimer?.Kill();
         _publicBroadcastTimer = AddTimer(matchCfg.PublicUnreadyReminderInterval, BroadcastUnreadyPlayers, TimerFlags.REPEAT);
@@ -2006,6 +2083,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
         _isServerShuttingDown = true;
         _privateCheckTimer?.Kill();
         _privateCheckTimer = null;
+        StopInitialReminderTimer();
+        _activeCenterMessage = "";
+        _centerMessageExpiration = 0f;
+        ForceRemoveHudTickListener();
         UnloadCustomModeManager();
         UnloadEloClanTagSystem();
         UnloadAfkManager();
