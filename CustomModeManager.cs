@@ -411,7 +411,7 @@ public partial class LiteMatchManager
 
         return combatTotal > 2
             ? $"{_customProposerName} 已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n同 意 {cmdHint} ，拒 絕 !no ：{_customVoteRemainingSeconds} 秒"
-            : $"{_customProposerName} 已 預 約 {modeName} 模 式 PK，同 意 {cmdHint} ，拒 絕 !no ：{_customVoteRemainingSeconds} 秒";
+            : $"{_customProposerName} 已 預 約 {modeName} 模 式 PK\n同 意 {cmdHint} ，拒 絕 !no ：{_customVoteRemainingSeconds} 秒";
     }
 
     // =========================================================================
@@ -587,7 +587,7 @@ public partial class LiteMatchManager
 
                 if (_isCustomVoteCountdown)
                 {
-                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}目 前 正 等 待 對 方 回 應（剩 餘 {_customVoteRemainingSeconds} 秒），取 消 請 輸 入 {ChatColors.Lime}!no");
+                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}目 前 正 等 待 對 方 回 應，取 消 請 輸 入 {ChatColors.Lime}!no");
                     return;
                 }
 
@@ -785,7 +785,7 @@ public partial class LiteMatchManager
                 !_customAgreedPlayers.Contains(p.SteamID) &&
                 _notifiedJoinPlayers.Add(p.SteamID))
             {
-                p.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no{ChatColors.White}（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+                p.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK ，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White} ，拒 絕 {ChatColors.Orange}!no");
                 p.PrintToCenter(pendingMsg);
             }
         }
@@ -801,7 +801,7 @@ public partial class LiteMatchManager
         string pendingMsg = BuildPendingCountdownCenterText(combatTotal, agreedCombat);
         string waitingMsg = combatTotal > 2
             ? $"已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n等 待 回 應：{_customVoteRemainingSeconds} 秒 !no 取 消"
-            : $"已 預 約 {modeName} 模 式 PK，等 待 對 手 回 應：{_customVoteRemainingSeconds} 秒\n取 消 預 約 請 輸 入 !no";
+            : $"已 預 約 {modeName} 模 式 PK\n等 待 回 應：{_customVoteRemainingSeconds} 秒 ，取 消 輸 入 !no";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
