@@ -427,7 +427,7 @@ public partial class LiteMatchManager
         if (totalCombat <= 0 || agreedCombat != totalCombat) return false;
 
         string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
-        Server.PrintToChatAll($" {_cachedPrefix} 場 上 {ChatColors.Green}{totalCombat} {ChatColors.White}人，已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入...（輸 入 {ChatColors.Orange}!no {ChatColors.White}取 消）");
+        Server.PrintToChatAll($" {_cachedPrefix} 場 上 {ChatColors.Green}{totalCombat} {ChatColors.White}人，已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，（ 輸 入 {ChatColors.Orange}!no {ChatColors.White}取 消 ）");
         return true;
     }
 
@@ -615,8 +615,8 @@ public partial class LiteMatchManager
                 {
                     KillCustomModeTimers();
                     _wasBalancedInviteActive = false;
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 更 換 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入（{ChatColors.Orange}!no {ChatColors.White}取 消）");
-                    player.PrintToCenter($"已 更 換 預 約 {targetModeName} 模 式 PK\n等 待 對 手 加 入（輸 入 !no 取 消）");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 更 換 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，（ {ChatColors.Orange}!no {ChatColors.White}取 消 ）");
+                    player.PrintToCenter($"已 更 換 預 約 {targetModeName} 模 式 PK\n等 待 對 手 加 入 ，取 消 輸 入 !no");
                 }
                 return;
             }
@@ -668,7 +668,7 @@ public partial class LiteMatchManager
             else
             {
                 Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName} 模 式{ChatColors.White} PK，等 待 其 他 玩 家 加 入");
-                player.PrintToCenter($"已 同 意 {targetModeName} 模 式 PK\n等 待 對 手 加 入（輸 入 !no 取 消）");
+                player.PrintToCenter($"已 同 意 {targetModeName} 模 式 PK\n等 待 對 手 加 入 ，取 消 輸 入 !no");
             }
             return;
         }
@@ -724,8 +724,8 @@ public partial class LiteMatchManager
             // 單人或人數未齊（1v0 / 2v0 / 2v1）：靜態預約，待人數平衡後自動開始倒數
             _wasBalancedInviteActive = false;
             KillCustomModeTimers();
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入（{ChatColors.Orange}!no {ChatColors.White}取 消）");
-            player.PrintToCenter($"已 預 約 {targetModeName} 模 式 PK，等 待 對 手 加 入\n取 消 預 約 請 輸 入 !no");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，（ {ChatColors.Orange}!no {ChatColors.White}取 消 ）");
+            player.PrintToCenter($"已 預 約 {targetModeName} 模 式 PK\n等 待 對 手 加 入 ，取 消 輸 入 !no");
         }
     }
 
@@ -800,7 +800,7 @@ public partial class LiteMatchManager
 
         string pendingMsg = BuildPendingCountdownCenterText(combatTotal, agreedCombat);
         string waitingMsg = combatTotal > 2
-            ? $"已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n等 待 其 他 玩 家 回 應：{_customVoteRemainingSeconds} 秒（輸 入 !no 取 消）"
+            ? $"已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n等 待 回 應：{_customVoteRemainingSeconds} 秒 !no 取 消"
             : $"已 預 約 {modeName} 模 式 PK，等 待 對 手 回 應：{_customVoteRemainingSeconds} 秒\n取 消 預 約 請 輸 入 !no";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
@@ -1008,12 +1008,12 @@ public partial class LiteMatchManager
             if (_isCustomVoteCountdown)
             {
                 player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}），取 消 請 輸 入 {ChatColors.Orange}!no");
-                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK，等 待 對 手 回 應：{_customVoteRemainingSeconds} 秒\n取 消 預 約 請 輸 入 !no");
+                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK\n等 待 回 應：{_customVoteRemainingSeconds} 秒 ，取 消 輸 入 !no");
             }
             else
             {
-                player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，取 消 改 打 標 準 請 輸 入 {ChatColors.Orange}!no");
-                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK，等 待 對 手 加 入\n取 消 預 約 請 輸 入 !no");
+                player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，取 消 請 輸 入 {ChatColors.Orange}!no");
+                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK\n等 待 對 手 加 入 ，取 消 輸 入 !no");
             }
             return true;
         }
@@ -1136,7 +1136,7 @@ public partial class LiteMatchManager
                 }
                 else
                 {
-                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}隊 伍 人 數 尚 未 平 衡，暫 停 倒 數 並 保 留 {ChatColors.Gold}{modeName} 模 式{ChatColors.Orange} 預 約");
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}隊 伍 人 數 尚 未 平 衡，已 保 留 {ChatColors.Gold}{modeName} 模 式{ChatColors.Orange} 預 約");
                     BroadcastCenterTextToCombatPlayers($"隊 伍 人 數 尚 未 平 衡，已 保 留 {modeName} 模 式 預 約");
                 }
             }
