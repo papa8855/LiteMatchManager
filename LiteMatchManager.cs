@@ -1909,9 +1909,10 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                         continue;
                     }
 
-                    _playerUnreadyTime.TryGetValue(steamId, out int currentTime);
+                   _playerUnreadyTime.TryGetValue(steamId, out int currentTime);
                     int updatedTime = currentTime + matchCfg.UnreadyReminderInterval;
                     _playerUnreadyTime[steamId] = updatedTime;
+                    _pendingInitialReminders.Remove(steamId);
 
                     if (updatedTime >= matchCfg.KickUnreadyPlayerTime)
                     {
