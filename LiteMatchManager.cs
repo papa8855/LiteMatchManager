@@ -546,7 +546,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void CheckPendingReminders()
     {
-        if (_pendingInitialReminders.Count == 0) return;
+        if (_pendingInitialReminders.Count == 0 || _isMatchLive || IsCustomModeVoteActive) return;
 
         float currentTime = Server.CurrentTime;
         _reminderRemoveCache.Clear();
@@ -562,7 +562,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
                 {
                     _reminderRemoveCache.Add(steamId);
 
-                    if (!_isMatchLive && !IsCustomModeVoteActive && !_readyPlayers.Contains(steamId))
+                    if (!_isMatchLive && !IsCustomModePromptActiveFor(steamId) && !_readyPlayers.Contains(steamId))
                     {
                         _playerUnreadyTime.TryGetValue(steamId, out int elapsed);
                         int timeLeft = Config.MatchSettings.KickUnreadyPlayerTime - elapsed;
@@ -1382,7 +1382,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
         Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 已 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
 
-        if (targetPlayers > 2 && !IsCustomModeVoteActive)
+        if (targetPlayers > 2 && !IsCustomModeSuppressingPrepHud)
         {
             string prepString = $"{matchCfg.HudHtml_Prep2v2_Line1}<br>{string.Format(matchCfg.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
             ShowHud(prepString, matchCfg.HudDuration_Prep);
@@ -1418,7 +1418,7 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
             Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName}{ChatColors.White} 取 消 了 準 備！準 備 進 度：{ChatColors.Green}{_readyPlayers.Count} / {targetPlayers}");
 
-            if (targetPlayers > 2 && !IsCustomModeVoteActive)
+            if (targetPlayers > 2 && !IsCustomModeSuppressingPrepHud)
             {
                 string prepString = $"{matchCfg.HudHtml_Prep2v2_Line1}<br>{string.Format(matchCfg.HudHtml_Prep2v2_Line2, _readyPlayers.Count, missingPlayers, targetPlayers)}<br>";
                 ShowHud(prepString, matchCfg.HudDuration_Prep);
@@ -1934,7 +1934,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastWaitingMessage()
     {
-        if (_isMatchLive || IsCustomModeVoteActive) return;
+        if (_isMatchLive) return;
+        if (TryBroadcastCustomWaitingMessage()) return;
+        if (IsCustomModeVoteActive) return;
 
         var (activeT, activeCT) = CountActiveCombatPlayers();
         int totalPlayers = activeT + activeCT;
@@ -1951,8 +1953,9 @@ public partial class LiteMatchManager : BasePlugin, IPluginConfig<LiteMatchConfi
 
     private void BroadcastUnreadyPlayers()
     {
-        if (_isMatchLive || IsCustomModeVoteActive) return;
-
+        if (_isMatchLive) return;
+        if (TryBroadcastCustomUnreadyMessage()) return;
+        if (IsCustomModeVoteActive) return;
         _unreadyNamesCache.Clear();
         int totalPlayers = 0;
 
