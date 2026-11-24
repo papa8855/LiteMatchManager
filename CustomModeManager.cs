@@ -888,11 +888,11 @@ public partial class LiteMatchManager
             CheckMatchStart();
             if (_isMatchLive)
             {
-                BroadcastCenterTextToCombatPlayers($"模 式{timeoutCenterReserve} 逾 時，進 入 標 準 對 戰");
+                BroadcastCenterTextToCombatPlayers($"模 式{timeoutCenterReserve} 已 逾 時，進 入 標 準 對 戰");
             }
             else
             {
-                HandBackUnreadyPlayersToMain($"模 式{timeoutCenterReserve} 逾 時，恢 復 標 準 對 戰");
+                HandBackUnreadyPlayersToMain($"模 式{timeoutCenterReserve} 已 逾 時，恢 復 標 準 對 戰");
             }
             return;
         }
@@ -1168,7 +1168,7 @@ public partial class LiteMatchManager
                 else
                 {
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}隊 伍 人 數 尚 未 平 衡，已 保 留 {ChatColors.Gold}{modeName} 模 式{ChatColors.Orange} 預 約");
-                    BroadcastCenterTextToCombatPlayers($"隊 伍 人 數 尚 未 平 衡，已 保 留 {modeName} 模 式 預 約");
+                    BroadcastCenterTextToCombatPlayers($"人 數 尚 未 平 衡，保 留 {modeName} 模 式 預 約");
                 }
             }
             return;
