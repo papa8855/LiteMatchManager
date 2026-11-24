@@ -625,7 +625,7 @@ public partial class LiteMatchManager
             else
             {
                 Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName} 模 式{ChatColors.White} PK（已 完 成 準 備），等 待 其 他 玩 家 加 入");
-                player.PrintToCenter($"已 同 意{targetModeName} 模 式 PK\n等 待 對 手 加 入（打 !R 改 回 標 準）");
+                player.PrintToCenter($"已 同 意{targetModeName} 模 式 PK\n等 待 對 手 加 入 或 !R 改 回 標 準");
             }
             return;
         }
@@ -714,7 +714,7 @@ public partial class LiteMatchManager
                 !_customAgreedPlayers.Contains(p.SteamID))
             {
                 _notifiedJoinPlayers.Add(p.SteamID);
-                p.PrintToCenter($"{_customProposerName} 已 預 約{modeName} 模 式 PK\n同 意 打 {cmdHint} ，標 準 對 戰 打 !R（或 !no）");
+                p.PrintToCenter($"{_customProposerName} 已 預 約{modeName} 模 式 PK\n同 意 {cmdHint} ，標 準 模 式 !R或 !no");
             }
         }
     }
@@ -734,8 +734,8 @@ public partial class LiteMatchManager
         var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
 
         string msg = combatTotal > 2
-            ? $"{_customProposerName} 已 預 約{modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n同 意 打 {cmdHint} ，標 準 對 戰 打 !R（或 !no）"
-            : $"{_customProposerName} 已 預 約{modeName} 模 式 PK\n同 意 打 {cmdHint} ，標 準 對 戰 打 !R（或 !no）";
+            ? $"{_customProposerName} 已 預 約{modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n同 意{cmdHint} ，標 準 對 戰 打 !R 或 !no"
+            : $"{_customProposerName} 已 預 約{modeName} 模 式 PK\n同 意{cmdHint} ，標 準 對 戰!R 或 !no";
 
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
