@@ -19,7 +19,7 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("AllowIn2v2")] public bool AllowIn2v2 { get; set; } = true;
     [JsonPropertyName("EnableEloInCustomMode")] public bool EnableEloInCustomMode { get; set; } = true;
     [JsonPropertyName("DisablePistolInSniperAndRifle")] public bool DisablePistolInSniperAndRifle { get; set; } = true;
-    [JsonPropertyName("VoteDurationSeconds")] public int VoteDurationSeconds { get; set; } = 30;
+    [JsonPropertyName("ReservationConfirmSeconds")] public int ReservationConfirmSeconds { get; set; } = 20;
     [JsonPropertyName("ProposeCooldownSeconds")] public int ProposeCooldownSeconds { get; set; } = 60;
     [JsonPropertyName("MaxProposalsPerWarmup")] public int MaxProposalsPerWarmup { get; set; } = 2;
 
@@ -51,6 +51,9 @@ public sealed class CustomModeSettingsConfig
 
 public partial class LiteMatchManager
 {
+    private const float JoinNotifyDelaySeconds = 1.5f;
+    private const float SoloSwitchCooldownSeconds = 3.0f;
+
     private FrozenSet<string> _pistolModeCommandsSet = FrozenSet<string>.Empty;
     private FrozenSet<string> _sniperModeCommandsSet = FrozenSet<string>.Empty;
     private FrozenSet<string> _rifleModeCommandsSet = FrozenSet<string>.Empty;
@@ -60,22 +63,41 @@ public partial class LiteMatchManager
     private bool _isCustomModeLocked = false;
     private int _lockedCustomPhaseIndex = 0;
 
-    // 暖場投票進行中狀態 (純文字倒數，不占用 HTML HUD)
-    private bool _isCustomVoteActive = false;
-    private int _pendingCustomPhaseIndex = -1;
-    private ulong _customVoteProposerId = 0;
-    private string _customVoteProposerName = "";
-    private int _customVoteRequiredPlayers = 0;
-    private int _customVoteRemainingSeconds = 0;
-    private readonly HashSet<ulong> _customVoteAgreedPlayers = new(8);
-    private readonly HashSet<ulong> _customVoteRosterSnapshot = new(8);
-    private CounterStrikeSharp.API.Modules.Timers.Timer? _customVoteTimer;
+    // 預約制核心狀態 (!pkX 本身即視同已準備 + 預約該模式)
+    private bool _hasCustomReservation = false;
+    private int _reservedCustomPhaseIndex = -1;
+    private ulong _customProposerId = 0;
+    private string _customProposerName = "";
+    private bool _wasBalancedInviteActive = false;
 
-    // 防洗頻與卡房限制 (真暫停 !R 踢除計時但不歸零 + 個人冷卻 + 次數上限；僅於換圖重置，防斷線重連刷次數)
+    // 人數平衡（1v1 / 2v2）後的統一倒數確認狀態（由 ReservationConfirmSeconds 控制，預設 20 秒）
+    private bool _isCustomVoteCountdown = false;
+    private int _customVoteRemainingSeconds = 0;
+
+    private readonly HashSet<ulong> _customAgreedPlayers = new(8);
+    private readonly HashSet<ulong> _notifiedJoinPlayers = new(8);
+    private readonly List<ulong> _tempRemoveIds = new(8);
+    private readonly List<string> _customUnrespondedNamesCache = new(8);
+
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _customHudTimer;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _joinNotifyDelayTimer;
+
+    // 防騷擾冷卻與次數上限 (僅於對手拒絕或確認逾時時計入；換圖重置)
     private readonly Dictionary<ulong, float> _customProposeCooldown = new(64);
     private readonly Dictionary<ulong, int> _customProposalCount = new(64);
+    private readonly Dictionary<ulong, float> _customSwitchCooldown = new(64);
 
-    private bool IsCustomModeVoteActive => _isCustomVoteActive;
+    // 只要場上有預約存在，暫停標準 !R 未準備踢人提示並阻止自動開標準局
+    private bool IsCustomModeVoteActive => _hasCustomReservation;
+
+    // 供主程式在 2v2 避免暖場 Prep HTML HUD 與指定模式預約重疊
+    private bool IsCustomModeSuppressingPrepHud => _hasCustomReservation;
+
+    // 供主程式 CheckPendingReminders 判斷：預約期間略過 5 秒初始 !R 彈窗防覆蓋
+    private bool IsCustomModePromptActiveFor(ulong steamId)
+    {
+        return _hasCustomReservation && !_customAgreedPlayers.Contains(steamId);
+    }
 
     // 僅在「指定模式 PK 的狙擊(1)／步槍(2)」禁小槍；標準 !R 三階段與手槍模式(0)完全不受影響
     private bool IsPistolDisabledInCurrentMatch()
@@ -123,14 +145,17 @@ public partial class LiteMatchManager
 
     private void UnloadCustomModeManager()
     {
-        _customVoteTimer?.Kill();
-        _customVoteTimer = null;
-        _isCustomVoteActive = false;
+        KillCustomModeTimers();
+        _hasCustomReservation = false;
+        _isCustomVoteCountdown = false;
+        _customVoteRemainingSeconds = 0;
+        _wasBalancedInviteActive = false;
         _isCustomModeLocked = false;
-        _customVoteAgreedPlayers.Clear();
-        _customVoteRosterSnapshot.Clear();
+        _customAgreedPlayers.Clear();
+        _notifiedJoinPlayers.Clear();
         _customProposeCooldown.Clear();
         _customProposalCount.Clear();
+        _customSwitchCooldown.Clear();
     }
 
     // 供主程式 ResetMatchState 呼叫；換圖時額外清空個人冷卻與暖場次數上限
@@ -144,10 +169,19 @@ public partial class LiteMatchManager
         {
             _customProposeCooldown.Clear();
             _customProposalCount.Clear();
+            _customSwitchCooldown.Clear();
         }
     }
 
-    // 【聊天室與中央純文字專用】：與 LiteMatchManager.json 分開，獨立控制空格排版
+    private void KillCustomModeTimers()
+    {
+        _customHudTimer?.Kill();
+        _customHudTimer = null;
+        _joinNotifyDelayTimer?.Kill();
+        _joinNotifyDelayTimer = null;
+    }
+
+    // 聊天室與中央純文字專用：維持空格排版
     private string GetCustomModeDisplayName(int phaseIndex = -1)
     {
         int idx = phaseIndex >= 0 ? phaseIndex : _lockedCustomPhaseIndex;
@@ -160,7 +194,7 @@ public partial class LiteMatchManager
         };
     }
 
-    // 【HTML HUD 看板專用】：維持讀取 LiteMatchManager.json 的 Duel_Name，與經典模式一致
+    // HTML HUD 看板專用：維持讀取 LiteMatchManager.json 的 Duel_Name，與經典模式一致
     private string GetCustomModeHudName(int phaseIndex = -1)
     {
         int idx = phaseIndex >= 0 ? phaseIndex : _lockedCustomPhaseIndex;
@@ -240,6 +274,200 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
+    // 0-GC 人數與狀態輔助查詢
+    // =========================================================================
+    private bool IsBalancedCombatRoster()
+    {
+        var (activeT, activeCT) = CountActiveCombatPlayers();
+        int total = activeT + activeCT;
+        return total >= 2 && activeT == activeCT && activeT <= Config.MatchSettings.MaxPlayersPerTeam;
+    }
+
+    private bool IsActiveCombatPlayer(ulong steamId)
+    {
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 } && p.SteamID == steamId)
+                return true;
+        }
+        return false;
+    }
+
+    private CCSPlayerController? FindActiveCombatPlayer(ulong steamId)
+    {
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 } && p.SteamID == steamId)
+                return p;
+        }
+        return null;
+    }
+
+    private (int TotalCombat, int ReadyCombat, int AgreedCombat) CountCustomModeCombatStats()
+    {
+        int total = 0, ready = 0, agreed = 0;
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
+            {
+                total++;
+                ulong sid = p.SteamID;
+                if (_readyPlayers.Contains(sid)) ready++;
+                if (_customAgreedPlayers.Contains(sid)) agreed++;
+            }
+        }
+        return (total, ready, agreed);
+    }
+
+    private void PruneDepartedCombatPlayers()
+    {
+        if (_customAgreedPlayers.Count == 0 && _notifiedJoinPlayers.Count == 0) return;
+
+        _tempRemoveIds.Clear();
+        foreach (ulong sid in _customAgreedPlayers)
+        {
+            if (!IsActiveCombatPlayer(sid)) _tempRemoveIds.Add(sid);
+        }
+        for (int i = 0; i < _tempRemoveIds.Count; i++) _customAgreedPlayers.Remove(_tempRemoveIds[i]);
+
+        _tempRemoveIds.Clear();
+        foreach (ulong sid in _notifiedJoinPlayers)
+        {
+            if (!IsActiveCombatPlayer(sid)) _tempRemoveIds.Add(sid);
+        }
+        for (int i = 0; i < _tempRemoveIds.Count; i++) _notifiedJoinPlayers.Remove(_tempRemoveIds[i]);
+        _tempRemoveIds.Clear();
+    }
+
+    private void MarkPlayerReadySilent(ulong steamId)
+    {
+        _readyPlayers.Add(steamId);
+        _playerUnreadyTime.Remove(steamId);
+        _pendingInitialReminders.Remove(steamId);
+    }
+
+    private void RecordProposerRejectionPenalty(ulong proposerId)
+    {
+        if (proposerId == 0) return;
+        var customCfg = Config.CustomModeSettings;
+        _customProposalCount[proposerId] = _customProposalCount.GetValueOrDefault(proposerId) + 1;
+        if (customCfg.ProposeCooldownSeconds > 0)
+        {
+            _customProposeCooldown[proposerId] = Server.CurrentTime + customCfg.ProposeCooldownSeconds;
+        }
+    }
+
+    private void BroadcastCenterTextToCombatPlayers(string message)
+    {
+        if (_isServerShuttingDown) return;
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
+            {
+                p.PrintToCenter(message);
+            }
+        }
+    }
+
+    // 預約取消／拒絕／逾時後若尚未開戰，立刻把未準備玩家的畫面切回標準 !R 提示
+    private void NotifyUnreadyPlayersStandardPrompt(string reasonPrefix, ulong excludeSteamId = 0)
+    {
+        if (_isMatchLive || _isServerShuttingDown) return;
+
+        int kickLimit = Config.MatchSettings.KickUnreadyPlayerTime;
+        int targetPlayers = GetDynamicRequiredPlayers();
+        int readyCount = _readyPlayers.Count - (excludeSteamId > 0 && _readyPlayers.Contains(excludeSteamId) ? 1 : 0);
+        if (readyCount < 0) readyCount = 0;
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
+                continue;
+
+            ulong sid = p.SteamID;
+            if (sid == excludeSteamId) continue;
+
+            if (!_readyPlayers.Contains(sid))
+            {
+                // 清除尚未觸發的 5 秒初始提醒，避免幾秒後重複彈一次
+                _pendingInitialReminders.Remove(sid);
+
+                _playerUnreadyTime.TryGetValue(sid, out int elapsed);
+                int timeLeft = kickLimit - elapsed;
+                if (timeLeft < 0) timeLeft = 0;
+
+                p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備（目前進度：{ChatColors.Green}{readyCount} / {targetPlayers}{ChatColors.White}），{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
+                p.PrintToCenter($"{reasonPrefix}\n請輸入 !R 準備，{timeLeft} 秒後將被踢出");
+            }
+            else
+            {
+                p.PrintToCenter($"{reasonPrefix}，恢 復 標 準 對 戰 等 待");
+            }
+        }
+    }
+
+    private string BuildPendingCountdownCenterText(int combatTotal, int agreedCombat)
+    {
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        string cmdHint = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
+
+        return combatTotal > 2
+            ? $"{_customProposerName} 已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n同 意 {cmdHint} ，拒 絕 !no ：{_customVoteRemainingSeconds} 秒"
+            : $"{_customProposerName} 已 預 約 {modeName} 模 式 PK，同 意 {cmdHint} ，拒 絕 !no ：{_customVoteRemainingSeconds} 秒";
+    }
+
+    // =========================================================================
+    // 暖場定時廣播整合（供 LiteMatchManager 的 Waiting / Unready 計時器呼叫）
+    // =========================================================================
+    private bool TryBroadcastCustomWaitingMessage()
+    {
+        if (!_hasCustomReservation || _isMatchLive || _isCustomVoteCountdown) return false;
+
+        var (activeT, activeCT) = CountActiveCombatPlayers();
+        int totalPlayers = activeT + activeCT;
+        if (totalPlayers <= 0 || totalPlayers != _readyPlayers.Count) return false;
+
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        Server.PrintToChatAll($" {_cachedPrefix} 場 上 {ChatColors.Green}{totalPlayers} {ChatColors.White}人，已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入...（輸 入 {ChatColors.Orange}!no {ChatColors.White}取 消）");
+        return true;
+    }
+
+    // 2B：無論在 2v0 / 2v1 或 20 秒倒數中，只要尚有未回應玩家（且非 1.5 秒選隊黑屏期），撞到定時週期即精簡提醒
+    private bool TryBroadcastCustomUnreadyMessage()
+    {
+        if (!_hasCustomReservation || _isMatchLive || _joinNotifyDelayTimer != null)
+            return false;
+
+        _customUnrespondedNamesCache.Clear();
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 } &&
+                !_customAgreedPlayers.Contains(p.SteamID))
+            {
+                _customUnrespondedNamesCache.Add(p.PlayerName);
+            }
+        }
+
+        if (_customUnrespondedNamesCache.Count == 0) return false;
+
+        string cmdHint = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
+        Server.PrintToChatAll($" {_cachedPrefix} 尚 未 回 應：{ChatColors.Orange}{string.Join(", ", _customUnrespondedNamesCache)}{ChatColors.White} ｜ 同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no");
+        return true;
+    }
+
+    // =========================================================================
     // 聊天室指令攔截：!pk1 / !pk2 / !pk3 / !no
     // =========================================================================
     private bool TryHandleCustomModeCommand(CCSPlayerController player, string command)
@@ -262,7 +490,7 @@ public partial class LiteMatchManager
 
         if (player.TeamNum is not (2 or 3))
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 旁 觀 者 模 式 發 起 或 參 與 模 式 投 票");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}您 無 法 從 旁 觀 者 模 式 預 約 或 參 與 模 式 PK");
             return true;
         }
 
@@ -277,7 +505,7 @@ public partial class LiteMatchManager
             }
             else
             {
-                HandleCustomModeVoteOrPropose(player, targetPhase);
+                HandleCustomModeReserveOrAgree(player, targetPhase);
             }
         });
 
@@ -286,31 +514,53 @@ public partial class LiteMatchManager
 
     private void HandleCustomModeReject(CCSPlayerController player)
     {
-        if (!_isCustomVoteActive)
+        if (!_hasCustomReservation)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Grey}目 前 沒 有 進 行 中 的 指 定 模 式 邀 請");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Grey}目 前 沒 有 進 行 中 的 指 定 模 式 預 約");
             return;
         }
 
-        string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-        bool isProposer = player.SteamID == _customVoteProposerId;
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        ulong proposerId = _customProposerId;
+        bool isProposer = player.SteamID == proposerId;
+        bool wasAlreadyAgreed = _customAgreedPlayers.Contains(player.SteamID);
 
-        CancelCustomModeVote(silent: true, centerNotice: isProposer ? $"已 取 消 {modeName} 模 式 P K 邀請" : $"婉 拒 {modeName} 模 式，恢 復 標 準 對 戰");
+        // 僅在尚未同意的對手拒絕時，計入發起人冷卻與次數上限
+        if (!isProposer && !wasAlreadyAgreed)
+        {
+            RecordProposerRejectionPenalty(proposerId);
+        }
+
+        // 1A：取消預約、發起人維持已準備狀態，並立即續算原本暫停的未準備踢人計時器
+        CancelCustomModeVote(silent: true, centerNotice: null, resumeUnreadyTimer: true);
 
         if (isProposer)
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}取 消 了 {ChatColors.Orange}{modeName}{ChatColors.White} 模 式 邀 請");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}取 消 了 {ChatColors.Orange}{modeName} 模 式{ChatColors.White} 預 約，維 持 標 準 準 備（{ChatColors.Lime}!R{ChatColors.White}）");
         }
         else
         {
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.Orange}拒 絕 了 {ChatColors.White}{modeName} {ChatColors.Orange}模 式，恢 復 標 準 對 戰 等 待");
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.Orange}拒 絕 了 {ChatColors.White}{modeName} 模 式{ChatColors.Orange}，恢 復 標 準 對 戰");
         }
 
-        // 若場上全員原本都已 !R，婉拒指定模式後立即接續進入標準對戰，絕不卡死
+        // 若場上全員原本都已準備（例如對手早已先 !R），婉拒後立即開打標準賽
         CheckMatchStart();
+
+        if (_isMatchLive)
+        {
+            BroadcastCenterTextToCombatPlayers(isProposer
+                ? $"已 取 消 {modeName} 模 式 預 約，進 入 標 準 對 戰"
+                : $"已 婉 拒 {modeName} 模 式，進 入 標 準 對 戰");
+        }
+        else
+        {
+            NotifyUnreadyPlayersStandardPrompt(isProposer
+                ? $"已 取 消 {modeName} 模 式 預 約"
+                : $"已 婉 拒 {modeName} 模 式");
+        }
     }
 
-    private void HandleCustomModeVoteOrPropose(CCSPlayerController player, int targetPhase)
+    private void HandleCustomModeReserveOrAgree(CCSPlayerController player, int targetPhase)
     {
         var customCfg = Config.CustomModeSettings;
         var modes = Config.MatchSettings.MatchModes;
@@ -324,12 +574,6 @@ public partial class LiteMatchManager
         var (activeT, activeCT) = CountActiveCombatPlayers();
         int totalPlayers = activeT + activeCT;
 
-        if (totalPlayers < 2 || activeT != activeCT || activeT > Config.MatchSettings.MaxPlayersPerTeam)
-        {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}雙 方 人 數 尚 未 齊 全，無 法 發 起 {ChatColors.Lime}指 定 模 式 {ChatColors.Orange}PK");
-            return;
-        }
-
         if (totalPlayers > 2 && !customCfg.AllowIn2v2)
         {
             player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}目 前 指 定 模 式 PK 僅 限 1 v 1 單 挑 開 放");
@@ -338,232 +582,360 @@ public partial class LiteMatchManager
 
         ulong steamId = player.SteamID;
         string targetModeName = GetCustomModeDisplayName(targetPhase);
-        string cmdHint = GetCustomModePrimaryCommand(targetPhase);
+        float now = Server.CurrentTime;
 
-        // 情況 A：場上已有進行中的模式提案
-        if (_isCustomVoteActive)
+        // 情況 A：場上已有進行中的預約
+        if (_hasCustomReservation)
         {
-            if (targetPhase != _pendingCustomPhaseIndex)
+            // A-1：發起人自己再次輸入 !pkX
+            if (steamId == _customProposerId)
             {
-                string currentVoteName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-                string currentCmd = GetCustomModePrimaryCommand(_pendingCustomPhaseIndex);
-                player.PrintToChat($" {_cachedPrefix} 目 前 正 在 投 票 {ChatColors.Gold}{currentVoteName}{ChatColors.White} 模 式，請 輸 入 {ChatColors.Lime}{currentCmd} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
+                if (targetPhase == _reservedCustomPhaseIndex)
+                {
+                    player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，取 消 請 輸 入 {ChatColors.Orange}!no");
+                    return;
+                }
+
+                if (_isCustomVoteCountdown)
+                {
+                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}目 前 正 等 待 對 方 回 應（剩 餘 {_customVoteRemainingSeconds} 秒），取 消 請 輸 入 {ChatColors.Lime}!no");
+                    return;
+                }
+
+                if (_customSwitchCooldown.TryGetValue(steamId, out float nextSwitch) && now < nextSwitch)
+                {
+                    int waitSec = (int)Math.Ceiling(nextSwitch - now);
+                    player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}切 換 預 約 模 式 過 快，請 {ChatColors.Lime}{waitSec} 秒{ChatColors.Orange} 後 再 試");
+                    return;
+                }
+
+                _customSwitchCooldown[steamId] = now + SoloSwitchCooldownSeconds;
+                _reservedCustomPhaseIndex = targetPhase;
+                _customAgreedPlayers.Clear();
+                _customAgreedPlayers.Add(steamId);
+                _notifiedJoinPlayers.Clear();
+                MarkPlayerReadySilent(steamId);
+
+                if (IsBalancedCombatRoster())
+                {
+                    ClearHudImmediate();
+                    _wasBalancedInviteActive = true;
+                    StartCustomVoteCountdown();
+                }
+                else
+                {
+                    KillCustomModeTimers();
+                    _wasBalancedInviteActive = false;
+                    Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 更 換 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入（{ChatColors.Orange}!no {ChatColors.White}取 消）");
+                    player.PrintToCenter($"已 更 換 預 約 {targetModeName} 模 式 PK\n等 待 對 手 加 入（輸 入 !no 取 消）");
+                }
                 return;
             }
 
-            if (!_customVoteAgreedPlayers.Add(steamId))
+            // A-2：其他玩家輸入了不同模式
+            if (targetPhase != _reservedCustomPhaseIndex)
             {
-                player.PrintToChat($" {_cachedPrefix} 你 已 同 意 {ChatColors.Gold}{targetModeName}{ChatColors.White} 模 式，等 待 其 他 玩 家 回 應（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+                string currentModeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+                string currentCmd = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
+                player.PrintToChat($" {_cachedPrefix} 目 前 預 約 為 {ChatColors.Gold}{currentModeName} 模 式{ChatColors.White} PK ｜ 同 意 {ChatColors.Lime}{currentCmd} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no");
                 return;
             }
 
-            int agreedCount = CountValidAgreedPlayers();
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName} 模 式{ChatColors.White} PK （ 進 度：{ChatColors.Lime}{agreedCount} / {_customVoteRequiredPlayers}{ChatColors.White} ）");
-
-            if (agreedCount >= _customVoteRequiredPlayers)
+            // A-3：其他玩家同意同一模式（同時視同已完成準備）
+            MarkPlayerReadySilent(steamId);
+            if (!_customAgreedPlayers.Add(steamId))
             {
-                FinalizeCustomModeAgreement();
+                player.PrintToChat($" {_cachedPrefix} 你 已 同 意 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，等 待 其 他 玩 家 回 應");
+                return;
+            }
+
+            // 搶快防呆：若玩家在 1.5 秒延遲提示還沒跳出前就同意，立刻取消延遲計時
+            _joinNotifyDelayTimer?.Kill();
+            _joinNotifyDelayTimer = null;
+
+            PruneDepartedCombatPlayers();
+            var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
+
+            if (IsBalancedCombatRoster())
+            {
+                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName} 模 式{ChatColors.White} PK（ 進 度：{ChatColors.Lime}{agreedCombat} / {combatTotal}{ChatColors.White} ）");
+
+                if (agreedCombat >= combatTotal)
+                {
+                    FinalizeCustomModeAgreement();
+                    return;
+                }
+
+                // 2v2 尚有其他玩家未回應：確保倒數已啟動並即時刷新 HUD
+                if (!_isCustomVoteCountdown)
+                {
+                    StartCustomVoteCountdown();
+                }
+                else
+                {
+                    BroadcastCustomVoteCountdownHud();
+                }
             }
             else
             {
-                BroadcastCustomVoteCenterText();
+                Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}同 意 {ChatColors.Green}{targetModeName} 模 式{ChatColors.White} PK，等 待 其 他 玩 家 加 入");
+                player.PrintToCenter($"已 同 意 {targetModeName} 模 式 PK\n等 待 對 手 加 入（輸 入 !no 取 消）");
             }
             return;
         }
 
-        // 情況 B：發起全新模式提案（檢查單次暖場次數上限與個人冷卻）
+        // 情況 B：建立全新預約（先檢查被拒次數上限與冷卻）
         int maxProposals = customCfg.MaxProposalsPerWarmup;
         if (maxProposals > 0 && _customProposalCount.TryGetValue(steamId, out int usedCount) && usedCount >= maxProposals)
         {
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Lime}指 定 模 式 {ChatColors.Orange}次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Lime}指 定 模 式 {ChatColors.Orange}預 約 次 數 已 達 上 限（{maxProposals} 次），請 輸 入 {ChatColors.Lime}!R {ChatColors.Orange}準 備");
             return;
         }
 
-        float now = Server.CurrentTime;
         if (_customProposeCooldown.TryGetValue(steamId, out float nextAllowed) && now < nextAllowed)
         {
             int waitSec = (int)Math.Ceiling(nextAllowed - now);
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}發 起 模 式 邀 請 冷 卻 中，請 於 {ChatColors.Lime}{waitSec} 秒{ChatColors.Orange} 後 再 試");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}預 約 模 式 冷 卻 中，請 於 {ChatColors.Lime}{waitSec} 秒{ChatColors.Orange} 後 再 試");
             return;
         }
 
-        // 開始建立新提案：先清空殘留的暖場 HTML HUD，並精準暫停 !R 踢除計時器
-        ClearHudImmediate();
+        if (_customSwitchCooldown.TryGetValue(steamId, out float nextPropose) && now < nextPropose)
+        {
+            int waitSec = (int)Math.Ceiling(nextPropose - now);
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}指 令 操 作 過 快，請 {ChatColors.Lime}{waitSec} 秒{ChatColors.Orange} 後 再 試");
+            return;
+        }
+
+        _customSwitchCooldown[steamId] = now + SoloSwitchCooldownSeconds;
+
+        // !pkX 本身就代表玩家已完成準備
+        MarkPlayerReadySilent(steamId);
+
+        _hasCustomReservation = true;
+        _reservedCustomPhaseIndex = targetPhase;
+        _customProposerId = steamId;
+        _customProposerName = player.PlayerName ?? "Player";
+        _isCustomVoteCountdown = false;
+        _customVoteRemainingSeconds = 0;
+        _customAgreedPlayers.Clear();
+        _customAgreedPlayers.Add(steamId);
+        _notifiedJoinPlayers.Clear();
+
+        // 有預約立即真暫停 60 秒 !R 未準備踢人警告計時器
         PauseUnreadyCheckTimer();
 
-        _isCustomVoteActive = true;
-        _pendingCustomPhaseIndex = targetPhase;
-        _customVoteProposerId = steamId;
-        _customVoteProposerName = player.PlayerName ?? "Player";
-        _customVoteRequiredPlayers = totalPlayers;
-        _customVoteRemainingSeconds = customCfg.VoteDurationSeconds > 0 ? customCfg.VoteDurationSeconds : 30;
+        if (IsBalancedCombatRoster())
+        {
+            ClearHudImmediate();
+            _wasBalancedInviteActive = true;
+            StartCustomVoteCountdown();
+        }
+        else
+        {
+            // 單人或人數未齊（1v0 / 2v0 / 2v1）：靜態預約，待人數平衡後自動開始倒數
+            _wasBalancedInviteActive = false;
+            KillCustomModeTimers();
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} PK，等 待 對 手 加 入（{ChatColors.Orange}!no {ChatColors.White}取 消）");
+            player.PrintToCenter($"已 預 約 {targetModeName} 模 式 PK，等 待 對 手 加 入\n取 消 預 約 請 輸 入 !no");
+        }
+    }
 
-        _customVoteAgreedPlayers.Clear();
-        _customVoteAgreedPlayers.Add(steamId);
+    // =========================================================================
+    // 統一預約倒數推播管線 (全純文字 PrintToCenter + Chat，零 OnTick)
+    // =========================================================================
+    private void StartCustomVoteCountdown()
+    {
+        int confirmSec = Config.CustomModeSettings.ReservationConfirmSeconds;
+        if (confirmSec <= 0) confirmSec = 20;
 
-        // 記錄當下參戰名單快照，防止投票中途換人頂替
-        _customVoteRosterSnapshot.Clear();
+        _isCustomVoteCountdown = true;
+        _customVoteRemainingSeconds = confirmSec;
+        _wasBalancedInviteActive = true;
+        _joinNotifyDelayTimer?.Kill();
+        _joinNotifyDelayTimer = null;
+
+        PauseUnreadyCheckTimer();
+        ClearHudImmediate();
+
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        string cmdHint = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 } &&
+                !_customAgreedPlayers.Contains(p.SteamID))
+            {
+                _notifiedJoinPlayers.Add(p.SteamID);
+            }
+        }
+
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no{ChatColors.White}（{ChatColors.Lime}{confirmSec} 秒{ChatColors.White}）");
+
+        BroadcastCustomVoteCountdownHud();
+
+        _customHudTimer?.Kill();
+        _customHudTimer = AddTimer(1.0f, OnCustomHudTick, TimerFlags.REPEAT);
+    }
+
+    private void NotifyNewPlayersDuringCountdown()
+    {
+        if (!_hasCustomReservation || !_isCustomVoteCountdown) return;
+
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        string cmdHint = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
+        var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
+        string pendingMsg = BuildPendingCountdownCenterText(combatTotal, agreedCombat);
+
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 } &&
+                !_customAgreedPlayers.Contains(p.SteamID) &&
+                _notifiedJoinPlayers.Add(p.SteamID))
+            {
+                p.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no{ChatColors.White}（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+                p.PrintToCenter(pendingMsg);
+            }
+        }
+    }
+
+    private void BroadcastCustomVoteCountdownHud()
+    {
+        if (!_hasCustomReservation || !_isCustomVoteCountdown) return;
+
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
+
+        string pendingMsg = BuildPendingCountdownCenterText(combatTotal, agreedCombat);
+        string waitingMsg = combatTotal > 2
+            ? $"已 預 約 {modeName} 模 式 PK [ {agreedCombat} / {combatTotal} ]\n等 待 其 他 玩 家 回 應：{_customVoteRemainingSeconds} 秒（輸 入 !no 取 消）"
+            : $"已 預 約 {modeName} 模 式 PK，等 待 對 手 回 應：{_customVoteRemainingSeconds} 秒\n取 消 預 約 請 輸 入 !no";
+
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
         {
             var p = players[i];
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
             {
-                _customVoteRosterSnapshot.Add(p.SteamID);
-            }
-        }
-
-        _customProposalCount[steamId] = _customProposalCount.GetValueOrDefault(steamId) + 1;
-        if (customCfg.ProposeCooldownSeconds > 0)
-        {
-            _customProposeCooldown[steamId] = now + customCfg.ProposeCooldownSeconds;
-        }
-
-        // 暫緩發起人 5 秒初始提醒，避免搶佔中央純文字畫面
-        _pendingInitialReminders.Remove(steamId);
-
-        string scaleText = totalPlayers == 2 ? "1 v 1" : $"{activeT} v {activeCT}";
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{_customVoteProposerName} {ChatColors.White}發 起 {ChatColors.Lime}{scaleText} {ChatColors.Gold}{targetModeName} 模 式{ChatColors.Lime} {ChatColors.White}PK 邀 請");
-        Server.PrintToChatAll($" {_cachedPrefix} 同 意 請 輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 請 輸 入 {ChatColors.Orange}!no");
-
-        BroadcastCustomVoteCenterText();
-
-        _customVoteTimer?.Kill();
-        _customVoteTimer = AddTimer(1.0f, OnCustomVoteTick, TimerFlags.REPEAT);
-    }
-
-    private int CountValidAgreedPlayers()
-    {
-        int count = 0;
-        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-        for (int i = 0; i < players.Length; i++)
-        {
-            var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 } &&
-                _customVoteAgreedPlayers.Contains(p.SteamID))
-            {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private bool IsCustomVoteRosterStillIntact()
-    {
-        var (activeT, activeCT) = CountActiveCombatPlayers();
-        int totalPlayers = activeT + activeCT;
-        if (totalPlayers != _customVoteRequiredPlayers || activeT != activeCT)
-            return false;
-
-        int matched = 0;
-        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-        for (int i = 0; i < players.Length; i++)
-        {
-            var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
-            {
-                if (!_customVoteRosterSnapshot.Contains(p.SteamID))
-                    return false;
-                matched++;
-            }
-        }
-        return matched == _customVoteRosterSnapshot.Count;
-    }
-
-    private void BroadcastCenterTextToCombatPlayers(string message)
-    {
-        if (_isServerShuttingDown) return;
-        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-        for (int i = 0; i < players.Length; i++)
-        {
-            var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
-            {
-                p.PrintToCenter(message);
+                p.PrintToCenter(_customAgreedPlayers.Contains(p.SteamID) ? waitingMsg : pendingMsg);
             }
         }
     }
 
-    // 每秒推播一次純文字 PrintToCenter 倒數，不碰 OnTick、不開 HTML
-    private void BroadcastCustomVoteCenterText()
+    private void OnCustomHudTick()
     {
-        if (!_isCustomVoteActive) return;
-
-        string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-        string cmdHint = GetCustomModePrimaryCommand(_pendingCustomPhaseIndex);
-        int agreedCount = CountValidAgreedPlayers();
-
-        string pendingMsg = _customVoteRequiredPlayers > 2
-            ? $"對 方 邀 請【 {modeName} 模 式 】 PK [ {agreedCount} / {_customVoteRequiredPlayers} ]\n同 意 {cmdHint} ，拒 絕 !no：{_customVoteRemainingSeconds} 秒"
-            : $"對 方 邀 請【 {modeName} 模 式 】PK\n同 意 {cmdHint} ，拒 絕 !no： {_customVoteRemainingSeconds} 秒";
-
-        string proposerWaitingMsg = $"你 發 起【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
-        string agreedWaitingMsg = $"已 同 意【 {modeName} 模 式 】PK\n[ {agreedCount} / {_customVoteRequiredPlayers} ] 等 待 回 應：{_customVoteRemainingSeconds} 秒";
-
-        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
-        for (int i = 0; i < players.Length; i++)
+        if (!_hasCustomReservation || _isMatchLive || _isServerShuttingDown)
         {
-            var p = players[i];
-            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3 })
-            {
-                string msg = p.SteamID == _customVoteProposerId
-                    ? proposerWaitingMsg
-                    : (_customVoteAgreedPlayers.Contains(p.SteamID) ? agreedWaitingMsg : pendingMsg);
-                p.PrintToCenter(msg);
-            }
-        }
-    }
-
-    private void OnCustomVoteTick()
-    {
-        if (!_isCustomVoteActive || _isMatchLive || _isServerShuttingDown)
-        {
-            CancelCustomModeVote(silent: true, resumeUnreadyTimer: false);
+            KillCustomModeTimers();
             return;
         }
 
-        if (!IsCustomVoteRosterStillIntact())
+        if (!IsActiveCombatPlayer(_customProposerId))
         {
-            CancelCustomModeVote(silent: false, reason: $"場 上 人 數 變 動，{ChatColors.Lime}指 定 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: "人 數 變 動，指 定 模 式 邀 請 已 取 消");
+            string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+            CancelCustomModeVote(silent: false, reason: "預 約 發 起 人 已 離 場，指 定 模 式 預 約 已 取 消", centerNotice: null, resumeUnreadyTimer: true);
             CheckMatchStart();
+            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt($"發 起 人 離 場，{modeName} 模 式 已 取 消");
+            return;
+        }
+
+        if (!IsBalancedCombatRoster())
+        {
+            _customHudTimer?.Kill();
+            _customHudTimer = null;
+            _isCustomVoteCountdown = false;
+            _customVoteRemainingSeconds = 0;
+            return;
+        }
+
+        if (!_isCustomVoteCountdown)
+        {
+            _customHudTimer?.Kill();
+            _customHudTimer = null;
             return;
         }
 
         _customVoteRemainingSeconds--;
         if (_customVoteRemainingSeconds <= 0)
         {
-            string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: true, centerNotice: $"{modeName} 模 式 P K 邀 請 已 逾 時 取 消");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Orange}{ChatColors.White}{modeName} 模 式 {ChatColors.Orange}PK 邀 請 已 逾 時 取 消，恢 復 標 準 對 戰 等 待");
+            string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+            RecordProposerRejectionPenalty(_customProposerId);
 
-            // 若場上全員原本都已 !R，逾時後立即接續進入標準對戰，絕不卡死
+            CancelCustomModeVote(silent: true, centerNotice: null, resumeUnreadyTimer: true);
+            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.White}{modeName} 模 式 {ChatColors.Orange}PK 預 約 已 逾 時，恢 復 標 準 對 戰");
+
             CheckMatchStart();
+            if (_isMatchLive)
+            {
+                BroadcastCenterTextToCombatPlayers($"{modeName} 模 式 預 約 逾 時，進 入 標 準 對 戰");
+            }
+            else
+            {
+                NotifyUnreadyPlayersStandardPrompt($"{modeName} 模 式 預 約 已 逾 時");
+            }
             return;
         }
 
-        BroadcastCustomVoteCenterText();
+        BroadcastCustomVoteCountdownHud();
+    }
+
+    // 對手進場選完隊伍後延遲 1.5 秒啟動倒數，避開黑屏／選隊介面防漏看
+    private void ScheduleDelayedJoinNotification()
+    {
+        _joinNotifyDelayTimer?.Kill();
+        _joinNotifyDelayTimer = AddTimer(JoinNotifyDelaySeconds, OnDelayedJoinNotifyFired);
+    }
+
+    private void OnDelayedJoinNotifyFired()
+    {
+        _joinNotifyDelayTimer = null;
+
+        if (!_hasCustomReservation || _isMatchLive || _isServerShuttingDown) return;
+        if (!IsActiveCombatPlayer(_customProposerId)) return;
+        if (!IsBalancedCombatRoster()) return;
+
+        PruneDepartedCombatPlayers();
+        var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
+
+        if (agreedCombat >= combatTotal)
+        {
+            FinalizeCustomModeAgreement();
+            return;
+        }
+
+        if (!_isCustomVoteCountdown)
+        {
+            StartCustomVoteCountdown();
+        }
+        else
+        {
+            NotifyNewPlayersDuringCountdown();
+        }
     }
 
     private void FinalizeCustomModeAgreement()
     {
-        int agreedPhase = _pendingCustomPhaseIndex;
-        string modeName = GetCustomModeDisplayName(agreedPhase);
+        int agreedPhase = _reservedCustomPhaseIndex;
+        string modeDisplayName = GetCustomModeDisplayName(agreedPhase);
 
-        _customVoteTimer?.Kill();
-        _customVoteTimer = null;
-        _isCustomVoteActive = false;
-        _pendingCustomPhaseIndex = -1;
-        _customVoteProposerId = 0;
-        _customVoteProposerName = "";
-        _customVoteRequiredPlayers = 0;
+        KillCustomModeTimers();
+        _hasCustomReservation = false;
+        _reservedCustomPhaseIndex = -1;
+        _customProposerId = 0;
+        _customProposerName = "";
+        _wasBalancedInviteActive = false;
+        _isCustomVoteCountdown = false;
         _customVoteRemainingSeconds = 0;
-        _customVoteAgreedPlayers.Clear();
-        _customVoteRosterSnapshot.Clear();
+        _customAgreedPlayers.Clear();
+        _notifiedJoinPlayers.Clear();
 
-        // 立刻覆寫中央純文字，避免 0.5 秒開戰延遲期間殘留舊倒數秒數
-        BroadcastCenterTextToCombatPlayers($"全 員 同 意 {modeName} 模 式 P K 即 將 開 戰");
+        // 立刻覆寫中央純文字，避免 0.5 秒開戰延遲期間殘留舊提示
+        BroadcastCenterTextToCombatPlayers($"全 員 同 意 {modeDisplayName} 模 式 PK 即 將 開 戰");
 
-        // 鎖定指定模式並自動將全體參戰玩家設為已準備
+        // 鎖定指定模式並確保全體參戰玩家皆為已準備
         _isCustomModeLocked = true;
         _lockedCustomPhaseIndex = agreedPhase;
 
@@ -573,17 +945,14 @@ public partial class LiteMatchManager
             var p = players[i];
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
             {
-                ulong sid = p.SteamID;
-                _readyPlayers.Add(sid);
-                _playerUnreadyTime.Remove(sid);
-                _pendingInitialReminders.Remove(sid);
+                MarkPlayerReadySilent(p.SteamID);
             }
         }
 
-        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意 本 場 鎖 定 {ChatColors.Gold}{modeName} 模 式{ChatColors.Lime} 搶 {ChatColors.Gold}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Lime}勝");
+        Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Lime}全 員 同 意 本 場 鎖 定 {ChatColors.Gold}{modeDisplayName} 模 式{ChatColors.Lime} 搶 {ChatColors.Gold}{Config.MatchSettings.FinalMatchWinScore} {ChatColors.Lime}勝");
         CheckMatchStart();
 
-        // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定並恢復 !R 計時器
+        // 極端邊界防呆：若因同幀人數突變導致未成功開賽，立即解除鎖定並恢復未準備計時
         if (!_isMatchLive)
         {
             _isCustomModeLocked = false;
@@ -594,18 +963,18 @@ public partial class LiteMatchManager
 
     private void CancelCustomModeVote(bool silent, string? reason = null, string? centerNotice = null, bool resumeUnreadyTimer = true)
     {
-        bool wasActive = _isCustomVoteActive;
+        bool wasActive = _hasCustomReservation || _isCustomVoteCountdown;
 
-        _customVoteTimer?.Kill();
-        _customVoteTimer = null;
-        _isCustomVoteActive = false;
-        _pendingCustomPhaseIndex = -1;
-        _customVoteProposerId = 0;
-        _customVoteProposerName = "";
-        _customVoteRequiredPlayers = 0;
+        KillCustomModeTimers();
+        _hasCustomReservation = false;
+        _reservedCustomPhaseIndex = -1;
+        _customProposerId = 0;
+        _customProposerName = "";
+        _wasBalancedInviteActive = false;
+        _isCustomVoteCountdown = false;
         _customVoteRemainingSeconds = 0;
-        _customVoteAgreedPlayers.Clear();
-        _customVoteRosterSnapshot.Clear();
+        _customAgreedPlayers.Clear();
+        _notifiedJoinPlayers.Clear();
 
         if (wasActive && !_isServerShuttingDown)
         {
@@ -625,54 +994,168 @@ public partial class LiteMatchManager
     }
 
     // =========================================================================
-    // 與 !R 準備 / 取消準備 / 離場變動 的連動掛鉤
+    // 方案 1：預約期間全面攔截 !R（防誤觸），不準備、不取消、不罰冷卻
     // =========================================================================
-    // 回傳 true 代表發起人原本已 !R、本次打 !R 僅用於撤銷自己的指定模式邀請，無須重印「已準備」提示
     private bool OnCustomModePlayerReady(CCSPlayerController player)
     {
-        if (!_isCustomVoteActive) return false;
+        if (!_hasCustomReservation) return false;
 
         ulong steamId = player.SteamID;
-        string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-        string cmdHint = GetCustomModePrimaryCommand(_pendingCustomPhaseIndex);
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+        string cmdHint = GetCustomModePrimaryCommand(_reservedCustomPhaseIndex);
 
-        // 若發起人自己改打 !R，視同放棄指定模式提案、配合打標準三階段
-        if (steamId == _customVoteProposerId)
+        // 發起人或已同意者輸入 !R -> 提醒改用 !no 取消
+        if (steamId == _customProposerId || _customAgreedPlayers.Contains(steamId))
         {
-            CancelCustomModeVote(silent: true, centerNotice: $"發 起 人 已 取 消 {modeName} 模 式，改 為 標 準 對 戰");
-            Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 改 為 標 準 準 備（!R），取 消 {ChatColors.Orange}{modeName}{ChatColors.White} 邀 請");
-
-            if (_readyPlayers.Contains(steamId))
+            if (_isCustomVoteCountdown)
             {
-                CheckMatchStart();
-                return true;
+                player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}），取 消 請 輸 入 {ChatColors.Orange}!no");
+                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK，等 待 對 手 回 應：{_customVoteRemainingSeconds} 秒\n取 消 預 約 請 輸 入 !no");
             }
-            return false;
+            else
+            {
+                player.PrintToChat($" {_cachedPrefix} 你 已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，取 消 改 打 標 準 請 輸 入 {ChatColors.Orange}!no");
+                player.PrintToCenter($"已 預 約 {modeName} 模 式 PK，等 待 對 手 加 入\n取 消 預 約 請 輸 入 !no");
+            }
+            return true;
         }
 
-        // 非發起人打 !R：保留其 !R 狀態（不搶開標準局），並提醒可輸入 !pkX 同意或 !no 拒絕
-        player.PrintToChat($" {_cachedPrefix} 目 前 有 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK 邀 請，輸 入 {ChatColors.Lime}{cmdHint} {ChatColors.White}同 意 或 {ChatColors.Orange}!no {ChatColors.White}拒 絕");
-        return false;
+        // 1.5 秒通知延遲空窗內對手搶快打 !R：直接提前啟動倒數並顯示完整提示
+        if (!_isCustomVoteCountdown && IsBalancedCombatRoster())
+        {
+            _joinNotifyDelayTimer?.Kill();
+            _joinNotifyDelayTimer = null;
+            StartCustomVoteCountdown();
+            return true;
+        }
+
+        if (_isCustomVoteCountdown)
+        {
+            var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no{ChatColors.White}（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+            player.PrintToCenter(BuildPendingCountdownCenterText(combatTotal, agreedCombat));
+        }
+        else
+        {
+            // 2v0 / 2v1 尚未平衡時同樣攔截 !R 並引導使用 !pkX 或 !no
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} PK，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no");
+            player.PrintToCenter($"{_customProposerName} 已 預 約 {modeName} 模 式 PK\n同 意 {cmdHint} ，拒 絕 !no");
+        }
+
+        return true;
     }
 
     private void OnCustomModePlayerUnready(ulong steamId)
     {
-        if (!_isCustomVoteActive) return;
+        if (!_hasCustomReservation) return;
 
-        if (steamId == _customVoteProposerId || _customVoteAgreedPlayers.Contains(steamId))
+        string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+
+        if (steamId == _customProposerId)
         {
-            string modeName = GetCustomModeDisplayName(_pendingCustomPhaseIndex);
-            CancelCustomModeVote(silent: false, reason: $"玩 家 取 消 準 備，{ChatColors.Lime}{modeName} 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: $"玩 家 取 消 準 備，{modeName} 模 式 已 取 消");
+            CancelCustomModeVote(
+                silent: false,
+                reason: $"預 約 發 起 人 取 消 準 備，{ChatColors.Lime}{modeName} 模 式{ChatColors.White} 預 約 已 取 消",
+                centerNotice: null,
+                resumeUnreadyTimer: true);
+
+            NotifyUnreadyPlayersStandardPrompt($"發 起 人 取 消 準 備，{modeName} 模 式 已 取 消", excludeSteamId: steamId);
+            return;
+        }
+
+        _customAgreedPlayers.Remove(steamId);
+        if (_isCustomVoteCountdown)
+        {
+            BroadcastCustomVoteCountdownHud();
         }
     }
 
     private void OnCustomModeWarmupRosterChanged()
     {
-        if (!_isCustomVoteActive || _isMatchLive) return;
+        if (!_hasCustomReservation || _isMatchLive || _isServerShuttingDown) return;
 
-        if (!IsCustomVoteRosterStillIntact())
+        PruneDepartedCombatPlayers();
+
+        // 1. 發起人離場或進觀戰 -> 立即清除預約並恢復 !R 計時與提示
+        if (!IsActiveCombatPlayer(_customProposerId))
         {
-            CancelCustomModeVote(silent: false, reason: $"場 上 玩 家 變 動，{ChatColors.Lime}指 定 模 式{ChatColors.White} 邀 請 已 自 動 取 消", centerNotice: "場 上 玩 家 變 動，指 定 模 式 已 取 消");
+            string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+            CancelCustomModeVote(
+                silent: false,
+                reason: $"預 約 發 起 人 離 場，{ChatColors.Lime}{modeName} 模 式{ChatColors.White} 預 約 已 自 動 取 消",
+                centerNotice: null,
+                resumeUnreadyTimer: true);
+
+            CheckMatchStart();
+            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt($"發 起 人 離 場，{modeName} 模 式 已 取 消");
+            return;
+        }
+
+        var (activeT, activeCT) = CountActiveCombatPlayers();
+        int totalPlayers = activeT + activeCT;
+
+        // 2. 不允許 2v2 但人數超過 2 人 -> 取消預約、保留發起人的 !R 狀態並恢復 !R 計時
+        if (totalPlayers > 2 && !Config.CustomModeSettings.AllowIn2v2)
+        {
+            CancelCustomModeVote(
+                silent: false,
+                reason: "人 數 超 過 1 v 1，指 定 模 式 預 約 已 取 消，改 為 標 準 對 戰",
+                centerNotice: null,
+                resumeUnreadyTimer: true);
+
+            CheckMatchStart();
+            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt("人 數 超 過 1 v 1，已 恢 復 標 準 對 戰");
+            return;
+        }
+
+        // 3. 尚未平衡（如對手離場退回 1v0，或 2v1 等第 4 人）-> 停掉倒數，保留發起人預約
+        if (!IsBalancedCombatRoster())
+        {
+            KillCustomModeTimers();
+            _isCustomVoteCountdown = false;
+            _customVoteRemainingSeconds = 0;
+
+            if (_wasBalancedInviteActive)
+            {
+                _wasBalancedInviteActive = false;
+                string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
+                var proposer = FindActiveCombatPlayer(_customProposerId);
+                if (proposer != null)
+                {
+                    proposer.PrintToChat($" {_cachedPrefix} {ChatColors.Orange}對 手 離 場 或 人 數 變 動，已 保 留 您 的 {ChatColors.Gold}{modeName} 模 式{ChatColors.Orange} 預 約，等 待 玩 家 加 入");
+                    proposer.PrintToCenter($"對 手 離 場，已 保 留 {modeName} 模 式 預 約");
+                }
+            }
+            return;
+        }
+
+        // 4. 達成 1v1 / 2v2 平衡：檢查是否有尚未通知的新對手
+        bool hasUnnotifiedPlayer = false;
+        ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
+        for (int i = 0; i < players.Length; i++)
+        {
+            var p = players[i];
+            if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 } &&
+                !_customAgreedPlayers.Contains(p.SteamID) &&
+                !_notifiedJoinPlayers.Contains(p.SteamID))
+            {
+                hasUnnotifiedPlayer = true;
+                break;
+            }
+        }
+
+        if (_isCustomVoteCountdown)
+        {
+            if (hasUnnotifiedPlayer)
+            {
+                NotifyNewPlayersDuringCountdown();
+            }
+            return;
+        }
+
+        if (hasUnnotifiedPlayer || !_wasBalancedInviteActive)
+        {
+            ScheduleDelayedJoinNotification();
         }
     }
 }
