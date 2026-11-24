@@ -53,6 +53,7 @@ public partial class LiteMatchManager
 {
     private const float JoinNotifyDelaySeconds = 1.5f;
     private const float SoloSwitchCooldownSeconds = 3.0f;
+    private const float StandardHandoffDelaySeconds = 3.0f;
 
     private FrozenSet<string> _pistolModeCommandsSet = FrozenSet<string>.Empty;
     private FrozenSet<string> _sniperModeCommandsSet = FrozenSet<string>.Empty;
@@ -377,16 +378,12 @@ public partial class LiteMatchManager
         }
     }
 
-    // 預約取消／拒絕／逾時後若尚未開戰，立刻把未準備玩家的畫面切回標準 !R 提示
-    private void NotifyUnreadyPlayersStandardPrompt(string reasonPrefix, ulong excludeSteamId = 0)
+    // 預約結束且尚未開戰時：只印指定模式結果，並將未準備玩家自動交回主程式 _pendingInitialReminders（3 秒後由主程式原生跳出 !R 提示）
+    private void HandBackUnreadyPlayersToMain(string centerNotice, ulong excludeSteamId = 0)
     {
         if (_isMatchLive || _isServerShuttingDown) return;
 
-        int kickLimit = Config.MatchSettings.KickUnreadyPlayerTime;
-        int targetPlayers = GetDynamicRequiredPlayers();
-        int readyCount = _readyPlayers.Count - (excludeSteamId > 0 && _readyPlayers.Contains(excludeSteamId) ? 1 : 0);
-        if (readyCount < 0) readyCount = 0;
-
+        float triggerAt = Server.CurrentTime + StandardHandoffDelaySeconds;
         ReadOnlySpan<CCSPlayerController> players = CollectionsMarshal.AsSpan(_serverPlayersCache);
         for (int i = 0; i < players.Length; i++)
         {
@@ -394,24 +391,15 @@ public partial class LiteMatchManager
             if (p is not { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 })
                 continue;
 
-            ulong sid = p.SteamID;
-            if (sid == excludeSteamId) continue;
-
-            if (!_readyPlayers.Contains(sid))
+            if (!string.IsNullOrEmpty(centerNotice))
             {
-                // 清除尚未觸發的 5 秒初始提醒，避免幾秒後重複彈一次
-                _pendingInitialReminders.Remove(sid);
-
-                _playerUnreadyTime.TryGetValue(sid, out int elapsed);
-                int timeLeft = kickLimit - elapsed;
-                if (timeLeft < 0) timeLeft = 0;
-
-                p.PrintToChat($" {_cachedPrefix} 請輸入 {ChatColors.Lime}!R{ChatColors.White} 準備（目前進度：{ChatColors.Green}{readyCount} / {targetPlayers}{ChatColors.White}），{ChatColors.Lime}{timeLeft}{ChatColors.White} 秒未準備將被踢出");
-                p.PrintToCenter($"{reasonPrefix}\n請輸入 !R 準備，{timeLeft} 秒後將被踢出");
+                p.PrintToCenter(centerNotice);
             }
-            else
+
+            ulong sid = p.SteamID;
+            if (sid != excludeSteamId && !_readyPlayers.Contains(sid))
             {
-                p.PrintToCenter($"{reasonPrefix}，恢 復 標 準 對 戰 等 待");
+                _pendingInitialReminders[sid] = triggerAt;
             }
         }
     }
@@ -442,7 +430,7 @@ public partial class LiteMatchManager
         return true;
     }
 
-    // 2B：無論在 2v0 / 2v1 或 20 秒倒數中，只要尚有未回應玩家（且非 1.5 秒選隊黑屏期），撞到定時週期即精簡提醒
+    // 2B：無論在 2v0 / 2v1 或倒數中，只要尚有未回應玩家（且非 1.5 秒選隊黑屏期），撞到定時週期即精簡提醒
     private bool TryBroadcastCustomUnreadyMessage()
     {
         if (!_hasCustomReservation || _isMatchLive || _joinNotifyDelayTimer != null)
@@ -554,9 +542,9 @@ public partial class LiteMatchManager
         }
         else
         {
-            NotifyUnreadyPlayersStandardPrompt(isProposer
-                ? $"已 取 消 {modeName} 模 式 預 約"
-                : $"已 婉 拒 {modeName} 模 式");
+            HandBackUnreadyPlayersToMain(isProposer
+                ? $"已 取 消 {modeName} 模 式 預 約，恢 復 標 準 對 戰"
+                : $"已 婉 拒 {modeName} 模 式，恢 復 標 準 對 戰");
         }
     }
 
@@ -838,7 +826,7 @@ public partial class LiteMatchManager
             string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
             CancelCustomModeVote(silent: false, reason: "預 約 發 起 人 已 離 場，指 定 模 式 預 約 已 取 消", centerNotice: null, resumeUnreadyTimer: true);
             CheckMatchStart();
-            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt($"發 起 人 離 場，{modeName} 模 式 已 取 消");
+            if (!_isMatchLive) HandBackUnreadyPlayersToMain($"發 起 人 離 場，{modeName} 模 式 已 取 消");
             return;
         }
 
@@ -874,7 +862,7 @@ public partial class LiteMatchManager
             }
             else
             {
-                NotifyUnreadyPlayersStandardPrompt($"{modeName} 模 式 預 約 已 逾 時");
+                HandBackUnreadyPlayersToMain($"{modeName} 模 式 預 約 已 逾 時，恢 復 標 準 對 戰");
             }
             return;
         }
@@ -1059,7 +1047,7 @@ public partial class LiteMatchManager
                 centerNotice: null,
                 resumeUnreadyTimer: true);
 
-            NotifyUnreadyPlayersStandardPrompt($"發 起 人 取 消 準 備，{modeName} 模 式 已 取 消", excludeSteamId: steamId);
+            HandBackUnreadyPlayersToMain($"發 起 人 取 消 準 備，{modeName} 模 式 已 取 消", excludeSteamId: steamId);
             return;
         }
 
@@ -1087,7 +1075,7 @@ public partial class LiteMatchManager
                 resumeUnreadyTimer: true);
 
             CheckMatchStart();
-            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt($"發 起 人 離 場，{modeName} 模 式 已 取 消");
+            if (!_isMatchLive) HandBackUnreadyPlayersToMain($"發 起 人 離 場，{modeName} 模 式 已 取 消");
             return;
         }
 
@@ -1104,7 +1092,7 @@ public partial class LiteMatchManager
                 resumeUnreadyTimer: true);
 
             CheckMatchStart();
-            if (!_isMatchLive) NotifyUnreadyPlayersStandardPrompt("人 數 超 過 1 v 1，已 恢 復 標 準 對 戰");
+            if (!_isMatchLive) HandBackUnreadyPlayersToMain("人 數 超 過 1 v 1，已 恢 復 標 準 對 戰");
             return;
         }
 
@@ -1137,25 +1125,4 @@ public partial class LiteMatchManager
             var p = players[i];
             if (p is { IsValid: true, Handle: not 0, IsBot: false, IsHLTV: false, TeamNum: 2 or 3, SteamID: > 0 } &&
                 !_customAgreedPlayers.Contains(p.SteamID) &&
-                !_notifiedJoinPlayers.Contains(p.SteamID))
-            {
-                hasUnnotifiedPlayer = true;
-                break;
-            }
-        }
-
-        if (_isCustomVoteCountdown)
-        {
-            if (hasUnnotifiedPlayer)
-            {
-                NotifyNewPlayersDuringCountdown();
-            }
-            return;
-        }
-
-        if (hasUnnotifiedPlayer || !_wasBalancedInviteActive)
-        {
-            ScheduleDelayedJoinNotification();
-        }
-    }
-}
+                !_notifiedJoinPlayers.Contains(
