@@ -434,7 +434,7 @@ public partial class LiteMatchManager
         if (totalCombat <= 0 || agreedCombat != totalCombat) return false;
 
         string modeName = GetCustomModeDisplayName(_reservedCustomPhaseIndex);
-        Server.PrintToChatAll($" {_cachedPrefix} 場 上 {ChatColors.Green}{totalCombat} {ChatColors.White}人，已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White} ，輸 入 {ChatColors.Orange}!no {ChatColors.White}取 消 預 約");
+        Server.PrintToChatAll($" {_cachedPrefix} 場 上 {ChatColors.Green}{totalCombat} {ChatColors.White}人，已 預 約 {ChatColors.Gold}{modeName} 模 式{ChatColors.White}，輸 入 {ChatColors.Orange}!no {ChatColors.White}取 消 預 約");
         return true;
     }
 
@@ -590,7 +590,7 @@ public partial class LiteMatchManager
             {
                 if (targetPhase == _reservedCustomPhaseIndex)
                 {
-                    player.PrintToChat($" {_cachedPrefix} 你 {CustomModeSelfActionText} {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White} ，取 消 請 輸 入 {ChatColors.Orange}!no");
+                    player.PrintToChat($" {_cachedPrefix} 你 {CustomModeSelfActionText} {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White}，取 消 請 輸 入 {ChatColors.Orange}!no");
                     return;
                 }
 
@@ -626,7 +626,7 @@ public partial class LiteMatchManager
                     KillCustomModeTimers();
                     _wasBalancedInviteActive = false;
                     Server.PrintToChatAll($" {_cachedPrefix} {ChatColors.Gold}{player.PlayerName} {ChatColors.White}已 更 換 預 約 {ChatColors.Gold}{targetModeName} 模 式{ChatColors.White}，{ChatColors.Orange}!no {ChatColors.White}取 消 預 約");
-                    player.PrintToCenter($"已 更 換 預 約 {targetModeName} 模 式\n等 待 對 手 加 入 ，!no 取 消 預 約");
+                    player.PrintToCenter($"已 更 換 預 約 {targetModeName} 模 式\n等 待 對 手 加 入，!no 取 消 預 約");
                 }
                 return;
             }
@@ -1052,7 +1052,7 @@ public partial class LiteMatchManager
         if (_isCustomVoteCountdown)
         {
             var (combatTotal, _, agreedCombat) = CountCustomModeCombatStats();
-            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}{CustomModeActionText} {ChatColors.Gold}{modeName} 模 式{ChatColors.White}，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no{ChatColors.White}（剩 餘 {ChatColors.Lime}{_customVoteRemainingSeconds} 秒{ChatColors.White}）");
+            player.PrintToChat($" {_cachedPrefix} {ChatColors.Gold}{_customProposerName} {ChatColors.White}{CustomModeActionText} {ChatColors.Gold}{modeName} 模 式{ChatColors.White}，同 意 {ChatColors.Lime}{cmdHint} {ChatColors.White}，拒 絕 {ChatColors.Orange}!no");
             player.PrintToCenter(BuildPendingCountdownCenterText(combatTotal, agreedCombat));
         }
         else
