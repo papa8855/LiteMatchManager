@@ -72,8 +72,8 @@ public partial class LiteMatchManager
     private bool _wasBalancedInviteActive = false;
     private bool _isSoloReservation = false;
 
-    private string CustomModeActionText => _isSoloReservation ? "已 預 約" : "發 起";
-    private string CustomModeSelfActionText => _isSoloReservation ? "已 預 約" : "已 發 起";
+    private string CustomModeActionText => _isSoloReservation ? "預 約" : "發 起";
+    private string CustomModeSelfActionText => _isSoloReservation ? "預 約" : "發 起";
     private string CustomModeCancelText => _isSoloReservation ? "取 消 預 約" : "取 消";
 
     // 人數平衡（1v1 / 2v2）後的統一倒數確認狀態（由 ReservationConfirmSeconds 控制，預設 20 秒）
