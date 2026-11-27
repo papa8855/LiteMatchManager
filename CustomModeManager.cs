@@ -19,6 +19,7 @@ public sealed class CustomModeSettingsConfig
     [JsonPropertyName("AllowIn2v2")] public bool AllowIn2v2 { get; set; } = true;
     [JsonPropertyName("EnableEloInCustomMode")] public bool EnableEloInCustomMode { get; set; } = true;
     [JsonPropertyName("DisablePistolInSniperAndRifle")] public bool DisablePistolInSniperAndRifle { get; set; } = true;
+    [JsonPropertyName("VoteDurationSeconds")] public int VoteDurationSeconds { get; set; } = 45;
     [JsonPropertyName("ReservationConfirmSeconds")] public int ReservationConfirmSeconds { get; set; } = 20;
     [JsonPropertyName("ProposeCooldownSeconds")] public int ProposeCooldownSeconds { get; set; } = 60;
     [JsonPropertyName("MaxProposalsPerWarmup")] public int MaxProposalsPerWarmup { get; set; } = 2;
@@ -746,8 +747,10 @@ public partial class LiteMatchManager
     // =========================================================================
     private void StartCustomVoteCountdown()
     {
-        int confirmSec = Config.CustomModeSettings.ReservationConfirmSeconds;
-        if (confirmSec <= 0) confirmSec = 20;
+        var customCfg = Config.CustomModeSettings;
+        int confirmSec = _isSoloReservation
+            ? (customCfg.ReservationConfirmSeconds > 0 ? customCfg.ReservationConfirmSeconds : 20)
+            : (customCfg.VoteDurationSeconds > 0 ? customCfg.VoteDurationSeconds : 45);
 
         _isCustomVoteCountdown = true;
         _customVoteRemainingSeconds = confirmSec;
